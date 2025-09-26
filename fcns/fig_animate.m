@@ -62,6 +62,7 @@ for ii = 1:p.playSpeed:nt
     
     % plot robot & GRF
     % real
+    disp(X(ii,1:3))
     fig_plot_robot(X(ii,:)',U(ii,:)',Ue(ii,:)',p)
     % desired
     fig_plot_robot_d(Xd(ii,:)',0*Ud(ii,:)',p)

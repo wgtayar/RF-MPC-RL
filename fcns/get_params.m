@@ -10,6 +10,10 @@ p.freq = 30;
 p.Rground = eye(3);
 p.Qf = diag([1e5 2e5 3e5 5e2 1e3 150 1e3 1e4 800 40 40 10]);
 
+p.acc_d = 1;
+p.vel_d = [0.5;0];
+p.yaw_d = 0;
+
 % ---- gait ----
 if gait == 1                % 1 - bound
     p.Tst = 0.1;
@@ -51,7 +55,10 @@ else                        % 0 - trot
     p.Tmpc = 8/100;
     p.Tst = 0.3;
     p.Tsw = 0.15;
-    p.R = diag(repmat([0.1 0.2 0.1]',[4,1]));
+    % p.R = diag(repmat([0.1 0.2 0.1]',[4,1]));
+    % p.R = diag(repmat([0.3466 0.6931 0.3466]',[4,1]));
+    % p.R = diag(repmat([0.3542 0.3109 0.15]',[4,1]));
+    p.R = diag(repmat([0.039 0.0689 0.04]', [4,1]));
     p.Q = diag([1e5 2e5 3e5 5e2 1e3 1e3 1e3 1e4 800 40 40 10]);
     p.Qf = p.Q;
 end

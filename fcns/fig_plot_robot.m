@@ -94,6 +94,7 @@ for i_leg = 1:4
     chain_leg(:,:,i_leg) = legKin(Twd2com,q(q_idx),p);
 end
 % ---------------------
+
 chain_leg1 = chain_leg(:,:,1);
 chain_leg2 = chain_leg(:,:,2);
 chain_leg3 = chain_leg(:,:,3);
@@ -152,7 +153,9 @@ chain0 = [[pcom(1)-goffset pcom(2)+goffset 0]',...
 
 end
 
-
+% Computes the forward kinematics of one leg and returns the 3D world 
+% positions of the hip joint, the next hip joint (pitch), the knee,
+% and the foot
 function chain = legKin(Twd2com,q,p)
     L = p.L;
     W = p.W;
@@ -181,47 +184,6 @@ function chain = legKin(Twd2com,q,p)
     p_f_wd = Twd2f(1:3,4);
 
     chain = [p_h_wd p_s_wd p_k_wd p_f_wd];
+    disp('Chain at the end of legKin:')
+    disp(chain)
 end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

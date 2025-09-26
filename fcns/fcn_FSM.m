@@ -226,20 +226,3 @@ end
 %% output
 FSMout = FSM;
 end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
