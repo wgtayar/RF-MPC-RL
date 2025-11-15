@@ -184,6 +184,4 @@ function chain = legKin(Twd2com,q,p)
     p_f_wd = Twd2f(1:3,4);
 
     chain = [p_h_wd p_s_wd p_k_wd p_f_wd];
-    disp('Chain at the end of legKin:')
-    disp(chain)
 end

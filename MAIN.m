@@ -142,9 +142,15 @@ p.yaw_d = 0;
 % m file to save the final simulation time and state X
 SnapFile = 'SimSnapshot.mat';
 if exist(SnapFile,'file')
-    S = load(SnapFile);  Sim = S.Sim;   % resume
-    tstart = Sim.t;  tend = tstart + dt_sim;
-    Xt = Sim.Xt;     Ut = Sim.Ut;   % last state and last input
+    S = load(SnapFile);
+    Sim = S.Sim;   % resume
+    tstart = Sim.t;
+    tend = tstart + dt_sim;
+    Xt = Sim.Xt;
+    Ut = Sim.Ut;
+    quarter_control_effort = Sim.quarter_control_effort;
+    control_effort = Sim.control_effort;
+    tracking_error = Sim.tracking_error;
 
     % optional: sanitize tiny drift in base orientation if stored as rotation matrix
     if isfield(Sim,'R_base')
@@ -162,11 +168,28 @@ else
     Sim.t  = 0;              % absolute simulation time at start of this chunk
     Sim.Xt = Xt;             % full plant state at chunk boundary
     Sim.Ut = Ut;             % last control at chunk boundary
-    tstart = 0;  tend = dt_sim;
+    tstart = 0;
+    tend = dt_sim;
+    Sim.quarter_control_effort = [];
+    Sim.control_effort = [];
+    Sim.tracking_error = [];
+    tracking_error = [];
+    control_effort = [];
 end
 
-tracking_error = [];
-control_effort = [];
+if isfield(Sim,'t_power')
+    t_power = Sim.t_power;
+else
+    t_power = [];
+end
+if isfield(Sim,'Pc_all')
+    Pc_all = Sim.Pc_all;
+else
+    Pc_all = [];
+end
+
+% tracking_error = [];
+% control_effort = [];
 
 % logging
 [tout,Xout,Uout,Xdout,Udout,Uext,FSMout] = deal([]);
@@ -212,8 +235,9 @@ for ii = 1:MAX_ITER
     tend = tstart + dt_sim;
 
     % metrics
-    tracking_error = [tracking_error; sum((Xt - Xd(:,1)).^2)];
-    control_effort = [control_effort; sum(Ut.^2)];
+    % tracking_error = [tracking_error; sum((Xt - Xd(:,1)).^2)];
+    % quarter_control_effort = [quarter_control_effort; sum(Ut())]
+    control_effort = [control_effort; sum(Ut)];
 
     % log
     lent = length(t(2:end));
@@ -230,20 +254,37 @@ end
 close(h_waitbar)
 fprintf('Calculation Complete!\n'); toc
 
+[tpc_chunk, Pc_chunk] = power_calc(tout, Xout, Uout, struct('BI', p.J));  % uses ALL samples of this chunk
+t_power = [t_power; tpc_chunk];
+Pc_all  = [Pc_all;  Pc_chunk];
+
+% === Predict DC bus current from power trace and plot ===
+Iopts = struct('I0', 1.0, 'eta', 1.4, 'clipNeg', false, 'smoothWin', 0); % adjust if you like
+stats_pred = Ibus_pred(t_power, Pc_all, 20, Iopts);
+
+figure('Name','Predicted Ibus'); 
+plot(stats_pred.t, stats_pred.Ipred, 'LineWidth', 1.25); grid on
+xlabel('time [s]'); ylabel('I_{bus} predicted [A]');
+title(sprintf('I_{bus} prediction, I_0=%.2f A, \\eta=%.2f, V=%.1f V', ...
+      stats_pred.I0, stats_pred.eta, stats_pred.Vbus));
+
+
 %% === Save for next simulation ===
 Sim.t  = Sim.t + MAX_ITER*dt_sim;   % advance absolute time
 Sim.Xt = Xt;    % persist final plant state
 Sim.Ut = Ut;    % persist last control
+Sim.control_effort = control_effort;
+
+Sim.t_power = t_power;
+Sim.Pc_all  = Pc_all;
+
 save(SnapFile,'Sim');
 
-disp('Tracking error:')
-disp(sum(tracking_error(:,1)))
+disp('Current:')
+disp(sum(stats_pred.Ipred(:,1))/4120)
+
+disp('Control Effort:')
+disp(sum(control_effort(:,1)))
 
 %% Animation
 [t,EA,EAd] = fig_animate(tout,Xout,Uout,Xdout,Udout,Uext,p);
-
-
-
-
-
-
