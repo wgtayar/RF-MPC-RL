@@ -1,4 +1,4 @@
-function [tracking_error_total, control_effort_total, I_total] = run_MPC_simulation(R_weights, gait)
+function [tracking_error_total, control_effort_total, I_chunk_mean, SOC_current, feasible] = run_MPC_simulation(R_weights, gait)
     if nargin < 2 || isempty(gait), gait = 0; end
     p = get_params(gait);
 
@@ -8,37 +8,32 @@ function [tracking_error_total, control_effort_total, I_total] = run_MPC_simulat
     p.R = diag(R_weights);
 
     dt_sim = p.simTimeStep;
-    SimTimeDuration = 1; % chunk duration [s]
+    SimTimeDuration = 10;
     MAX_ITER = floor(SimTimeDuration / dt_sim);
 
     snap_path = 'SimSnapshot_RL.mat';
+    feasible  = true;
 
-    % --- Init or resume boundary state ---
     if exist(snap_path, 'file')
         S = load(snap_path, 'Sim');
         Sim = S.Sim;
-        Xt = Sim.Xt; % plant state at last boundary
-        Ut = Sim.Ut; % last control
-        t_abs = Sim.t; % absolute time at start
-        
-        if isfield(Sim,'t_power')
-            t_power = Sim.t_power; 
+
+        Xt = Sim.Xt;
+        Ut = Sim.Ut;
+        t_abs = Sim.t;
+
+        if isfield(Sim,'t_power'), t_power = Sim.t_power; else, t_power = []; end
+        if isfield(Sim,'Pc_all'),  Pc_all = Sim.Pc_all;  else, Pc_all  = []; end
+        if isfield(Sim,'I_all'),   I_all = Sim.I_all;   else, I_all   = []; end
+
+        if isfield(Sim,'SOC')
+            SOC = Sim.SOC;
         else
-            t_power = []; 
-        end
-        
-        if isfield(Sim,'Pc_all')
-            Pc_all = Sim.Pc_all;
-        else
-            Pc_all = [];
-        end
-        
-        if isfield(Sim,'I_all')
-            I_all = Sim.I_all;
-        else
-            I_all = []; 
+            SOC = 1.0;
+            Sim.SOC = SOC;
         end
     else
+        % fresh start
         if gait == 1
             [p, Xt, Ut] = fcn_bound_ref_traj(p);
         else
@@ -49,19 +44,51 @@ function [tracking_error_total, control_effort_total, I_total] = run_MPC_simulat
         Sim.t = 0.0;
         Sim.Xt = Xt;
         Sim.Ut = Ut;
-        
+
         t_abs = Sim.t;
         t_power = [];
         Pc_all = [];
         I_all = [];
+
+        SOC = 1.0;
+        Sim.SOC = SOC;
     end
 
-    qp_options = optimoptions('quadprog', ...
-        'Display', 'off', ...
-        'ConstraintTolerance', 1e-5, ...
-        'OptimalityTolerance', 1e-5, ...
-        'MaxIterations', 1000, ...
-        'StepTolerance', 1e-8);
+    % Debug of MPC
+    persistent mpc_call_idx
+    if isempty(mpc_call_idx); mpc_call_idx = 0; end
+    mpc_call_idx = mpc_call_idx + 1;
+
+    dbg_call = struct();
+    dbg_call.call_idx = mpc_call_idx;
+    dbg_call.timestamp = datestr(now,'yyyy-mm-dd HH:MM:SS.FFF');
+    dbg_call.gait = gait;
+    dbg_call.t_abs_start = t_abs;
+    dbg_call.R_weights = R_weights(:);
+    dbg_call.R_diag_first3 = diag(p.R(1:3,1:3));
+    dbg_call.Xt0 = Xt;
+    dbg_call.Ut0 = Ut;
+    dbg_call.SOC0 = SOC;
+    dbg_call.simTimeStep = p.simTimeStep;
+    dbg_call.predHorizon = p.predHorizon;
+    dbg_call.Tmpc = p.Tmpc;
+
+    if exist('MPC_call_log.mat','file')
+        Clog = load('MPC_call_log.mat','MPC_calls');
+        MPC_calls = Clog.MPC_calls;
+        MPC_calls(end+1) = dbg_call;
+    else
+        MPC_calls = dbg_call;
+    end
+    save('MPC_call_log.mat','MPC_calls');
+    % End Debug
+
+
+    fprintf('MPC call %d: t_abs=%.3f, ||Xt||=%.3f, ||Ut||=%.3f, R=[%.3g %.3g %.3g]\n', ...
+        mpc_call_idx, t_abs, norm(Xt), norm(Ut), ...
+        R_weights(1), R_weights(2), R_weights(3));
+
+    qp_options = optimoptions('quadprog','Display','off');
 
     tracking_error = [];
     control_effort = [];
@@ -72,9 +99,9 @@ function [tracking_error_total, control_effort_total, I_total] = run_MPC_simulat
 
     try
         for ii = 1:MAX_ITER
-            
+
             t0_abs = t_abs + dt_sim * (ii-1);
-            t_hor  = t0_abs + p.Tmpc * (0:p.predHorizon-1);
+            t_hor = t0_abs + p.Tmpc * (0:p.predHorizon-1);
 
             % Reference / FSM from absolute time
             if gait == 1
@@ -85,39 +112,83 @@ function [tracking_error_total, control_effort_total, I_total] = run_MPC_simulat
 
             % Build QP and solve
             [H,g,Aineq,bineq,Aeq,beq] = fcn_get_QP_form_eta(Xt, Ut, Xd, Ud, p);
+            H = (H + H')/2;
+
             [zval, ~, exitflag, output] = quadprog(H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
+
             if exitflag <= 0
-                % Penalize failures but keep snapshot consistent
-                warning("quadprog failed: %s", output.message);
-                tracking_error_total  = 1e3;
-                control_effort_total  = 7.5e7;
+                Hsym    = (H + H')/2;
+                lam     = eig(Hsym);
+                minEigH = min(lam);
+                maxEigH = max(lam);
+                condH   = maxEigH / max(minEigH, 1e-12);
+
+                dbg_failure = struct();
+                dbg_failure.call_idx  = mpc_call_idx;
+                dbg_failure.ii = ii;
+                dbg_failure.t0_abs = t0_abs;
+                dbg_failure.Xt = Xt;
+                dbg_failure.Ut = Ut;
+                dbg_failure.Xd = Xd;
+                dbg_failure.Ud = Ud;
+                dbg_failure.FSM = FSM;
+                dbg_failure.t_hor = t_hor;
+                dbg_failure.R_weights = R_weights;
+                dbg_failure.H = H;
+                dbg_failure.g = g;
+                dbg_failure.Aineq = Aineq;
+                dbg_failure.bineq = bineq;
+                dbg_failure.Aeq = Aeq;
+                dbg_failure.beq = beq;
+                dbg_failure.minEigH = minEigH;
+                dbg_failure.maxEigH = maxEigH;
+                dbg_failure.condH = condH;
+                dbg_failure.exitflag = exitflag;
+                dbg_failure.output = output;
+
+                save('dbg_failure_last.mat','dbg_failure');
+
+                warning("quadprog failed (exitflag=%d): %s", exitflag, output.message);
+
+                tracking_error_total = 1e3;
+                control_effort_total = 7.5e7;
+                I_chunk_mean = 50 * 1.0526;
+
+                if ~exist('SOC','var') || isempty(SOC)
+                    SOC = 1.0;
+                end
+                SOC_current = SOC;
                 Sim.Pc_all = Pc_all;
                 Sim.I_all = I_all;
-                save(snap_path, 'Sim');  % keep previous state
+                Sim.SOC = SOC;
+                save(snap_path,'Sim');
+
+                feasible = false;
                 return;
             end
 
-            % Apply first control correction (delta formulation)
             Ut = Ut + zval(1:12);
 
-            % External disturbance (disabled here)
             [u_ext, p_ext] = fcn_get_disturbance(t0_abs, p);
             p.p_ext = p_ext;
             u_ext = 0 * u_ext;
 
-            % Simulate dynamics over one step
-            [t_chunk, X_chunk] = ode45(@(t,X) dynamics_SRB(t, X, Ut, Xd(:,1), u_ext, p), ...
-                           [t0_abs, t0_abs + dt_sim], Xt);
+            [t_chunk, X_chunk] = ode45(@(t,X) dynamics_SRB(t, X, Ut, Xd, u_ext, p), ...
+                                       [t0_abs, t0_abs + dt_sim], Xt);
 
             Xt = X_chunk(end,:).';
 
             if any(isnan(Xt)) || any(isinf(Xt))
                 warning("dynamics produced NaN/Inf");
+
                 tracking_error_total = 1e6;
                 control_effort_total = 1e6;
+                I_chunk_mean = 1.0526;
+                feasible = false;
+
                 Sim.t_power = Pc_all;
                 Sim.I_all = I_all;
-                save(snap_path, 'Sim');  % keep previous
+                save(snap_path,'Sim');
                 return;
             end
 
@@ -135,53 +206,51 @@ function [tracking_error_total, control_effort_total, I_total] = run_MPC_simulat
             Uout = [Uout; repmat(Ut.', numel(idx), 1)];
         end
 
-        % Advance snapshot
-        Sim.t  = t_abs + MAX_ITER * dt_sim;
+        Sim.t = t_abs + MAX_ITER * dt_sim;
         Sim.Xt = Xt;
         Sim.Ut = Ut;
 
+        % Power, Current, SOC
         if ~isempty(tout)
-            [tpc_chunk, Pc_chunk] = power_calc(tout, Xout, Uout, struct('BI', p.J));
-
-            t_power = [t_power; tpc_chunk];
-            Pc_all = [Pc_all; Pc_chunk];
-
-            Iopts = struct();
-            Iopts.I0 = 1.0;
-            Iopts.eta = 1.4;
-            Iopts.clipNeg = false;
-            Iopts.smoothWin = 0.0;
-
-            stats_pred = Ibus_pred(t_power, Pc_all, 20, Iopts);
-            I_all = stats_pred.Ipred(:);
+            [SOC_current, I_chunk_mean, t_power, Pc_all, I_all] = ...
+                update_SOC_from_power_RL(tout, Xout, Uout, t_power, Pc_all, p);
+        else
+            % no new samples
+            SOC_current = SOC;
+            I_chunk_mean = 0.0;
         end
 
+        Sim.SOC = SOC_current;
+        Sim.SOC_current = SOC_current;
         Sim.t_power = t_power;
         Sim.Pc_all = Pc_all;
         Sim.I_all = I_all;
+        Sim.I_chunk_mean = I_chunk_mean;
 
-        save("m_i_values.mat", "I_all")
-
-        I_total = sum(I_all);
         tracking_error_total = sum(tracking_error);
         control_effort_total = sum(control_effort);
 
-        % disp('I total:')
-        % disp(I_total)
-        % disp('Tracking error total:')
-        % disp(tracking_error_total)
-        % disp('Control effort total:')
-        % disp(control_effort_total)
+        save(snap_path,'Sim');
 
-        save(snap_path, 'Sim');
+        fprintf('SOC_current (RL) = %.8f\n', SOC_current);
 
     catch ME
-        fprintf("run_MPC_simulation exception: %s", ME.message);
+        fprintf("run_MPC_simulation exception: %s\n", ME.message);
+
         Sim.t_power = t_power;
         Sim.Pc_all = Pc_all;
         Sim.I_all = I_all;
-        save(snap_path, 'Sim');
+
+        if ~exist('SOC','var') || isempty(SOC)
+            SOC = 1.0;
+        end
+        Sim.SOC = SOC;
+        save(snap_path,'Sim');
+
         tracking_error_total = 1e3;
         control_effort_total = 1e7;
+        I_chunk_mean = 50 * 1.0526;
+        SOC_current = SOC;
+        feasible = false;
     end
 end
