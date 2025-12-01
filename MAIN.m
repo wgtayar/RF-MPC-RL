@@ -148,7 +148,7 @@ if exist(SnapFile,'file')
     tend = tstart + dt_sim;
     Xt = Sim.Xt;
     Ut = Sim.Ut;
-    quarter_control_effort = Sim.quarter_control_effort;
+    % quarter_control_effort = Sim.quarter_control_effort;
     control_effort = Sim.control_effort;
     tracking_error = Sim.tracking_error;
 
@@ -176,6 +176,9 @@ else
     tracking_error = [];
     control_effort = [];
 end
+
+qp_options = optimoptions('quadprog', ...
+    'Display', 'off');
 
 if isfield(Sim,'t_power')
     t_power = Sim.t_power;
@@ -211,7 +214,7 @@ for ii = 1:MAX_ITER
     % QP
     [H,g,Aineq,bineq,Aeq,beq] = fcn_get_QP_form_eta(Xt,Ut,Xd,Ud,p);
     if ~use_qpSWIFT
-        zval = quadprog(H,g,Aineq,bineq,Aeq,beq,[],[]);
+        zval = quadprog(H,g,Aineq,bineq,Aeq,beq,[],[],[],qp_options);
     else
         [zval,~] = qpSWIFT(sparse(H),g,sparse(Aeq),beq,sparse(Aineq),bineq);
     end
@@ -235,7 +238,7 @@ for ii = 1:MAX_ITER
     tend = tstart + dt_sim;
 
     % metrics
-    % tracking_error = [tracking_error; sum((Xt - Xd(:,1)).^2)];
+    tracking_error = [tracking_error; sum((Xt - Xd(:,1)).^2)];
     % quarter_control_effort = [quarter_control_effort; sum(Ut())]
     control_effort = [control_effort; sum(Ut)];
 
@@ -259,14 +262,42 @@ t_power = [t_power; tpc_chunk];
 Pc_all  = [Pc_all;  Pc_chunk];
 
 % === Predict DC bus current from power trace and plot ===
-Iopts = struct('I0', 1.0, 'eta', 1.4, 'clipNeg', false, 'smoothWin', 0); % adjust if you like
-stats_pred = Ibus_pred(t_power, Pc_all, 20, Iopts);
+Iopts = struct('I0', 1.0, 'eta', 1.6, 'clipNeg', true, 'smoothWin', 0);
+[stats_pred, Vbus_interp, t_rel] = predict_Current_with_Voltage(t_power, Pc_all, 'Node8_Voltage.xlsx', Iopts);
 
-figure('Name','Predicted Ibus'); 
-plot(stats_pred.t, stats_pred.Ipred, 'LineWidth', 1.25); grid on
+I_bus = stats_pred.Ipred;
+
+params = struct();
+params.V_cell_nom = 3.3;
+params.C_cell_nom = 1.2;
+params.DoD = 1.0;
+params.n_series_fixed = 6;
+
+[Energy_Wh, Capacity_Ah, n_s, n_p, pack] = ...
+    battery_Sizing_from_Trace(t_rel, I_bus, Vbus_interp, params);
+
+
+I_cell   = I_bus ./ n_p;
+V_cell_t = Vbus_interp ./ n_s;
+
+C_nom_cell = params.C_cell_nom;
+SOC_init   = 1.0;
+
+[SOC_est_vec, SOC_final] = estimateSOC(t_rel, I_cell, V_cell_t, C_nom_cell, SOC_init);
+
+fprintf('Final SOC after 1s trace: %.2f percent\n', SOC_final * 100);
+
+figure('Name','Predicted Ibus with measured Vbus');
+subplot(2,1,1);
+plot(t_rel, Vbus_interp, 'LineWidth', 1.25); grid on;
+xlabel('time [s]'); ylabel('V_{bus} [V]');
+title('Interpolated bus voltage from robot log');
+
+subplot(2,1,2);
+plot(t_rel, I_bus, 'LineWidth', 1.25); grid on;
 xlabel('time [s]'); ylabel('I_{bus} predicted [A]');
-title(sprintf('I_{bus} prediction, I_0=%.2f A, \\eta=%.2f, V=%.1f V', ...
-      stats_pred.I0, stats_pred.eta, stats_pred.Vbus));
+title(sprintf('I_{bus} prediction, I_0=%.2f A, \\eta=%.2f', ...
+      stats_pred.I0, stats_pred.eta));
 
 
 %% === Save for next simulation ===
@@ -274,6 +305,7 @@ Sim.t  = Sim.t + MAX_ITER*dt_sim;   % advance absolute time
 Sim.Xt = Xt;    % persist final plant state
 Sim.Ut = Ut;    % persist last control
 Sim.control_effort = control_effort;
+Sim.tracking_error = tracking_error;
 
 Sim.t_power = t_power;
 Sim.Pc_all  = Pc_all;
@@ -285,6 +317,9 @@ disp(sum(stats_pred.Ipred(:,1))/4120)
 
 disp('Control Effort:')
 disp(sum(control_effort(:,1)))
+
+disp('Tracking Error:')
+disp(sum(tracking_error(:,1)))
 
 %% Animation
 [t,EA,EAd] = fig_animate(tout,Xout,Uout,Xdout,Udout,Uext,p);

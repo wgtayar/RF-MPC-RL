@@ -9,9 +9,9 @@ function stats = Ibus_pred(t_pc, Pc, Vbus, opts)
     t_pc = t_pc(:); Pc = Pc(:);
     Ip = opts.I0 + opts.eta * (Pc ./ Vbus);
 
-    % if opts.clipNeg
-    %     Ip = max(Ip, 0);
-    % end
+    if opts.clipNeg
+        Ip = max(Ip, 0);
+    end
 
     % Optional smoothing in time
     if ~isempty(opts.smoothWin) && opts.smoothWin > 0
