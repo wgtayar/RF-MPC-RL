@@ -3,16 +3,16 @@ function setup_RL_MPC()
     p = get_params(gait);
 
     initial_R = [p.R(1,1); p.R(2,2); p.R(3,3)];
-    lower_abs = 0.01 * initial_R;
-    upper_abs = 5.00  * initial_R;
+    lower_abs = 0.5 * initial_R;
+    upper_abs = 3.0 * initial_R;
 
-    % Observation: [nt; nu; last_R./upper_abs (3)]
+    % Observation: [nt; nu; SOC_current; last_R./upper_abs (3)]
     obsInfo  = rlNumericSpec([6 1], 'Name','observations');
 
-    % Look again at this!! Make sure the 0.15 is actually possible
+    deltaMax = 1.5;
     actionInfo = rlNumericSpec([3 1], ...
-        'LowerLimit', [-0.1; -0.15; -0.15], ...
-        'UpperLimit',  [0.1; 0.15; 0.15], ...
+        'LowerLimit', -deltaMax * ones(3,1), ...
+        'UpperLimit',  deltaMax * ones(3,1), ...
         'Name','dR_frac');
 
     % Create env
@@ -27,7 +27,7 @@ function setup_RL_MPC()
         reluLayer('Name','actor_relu2')
         fullyConnectedLayer(3,   'Name','actor_fc3')
         tanhLayer('Name','actor_tanh')
-        scalingLayer('Name','action','Scale',0.10) % outputs in [-0.1, 0.1]
+        scalingLayer('Name','action','Scale',1.0) % outputs in [-0.1, 0.1]
     ];
 
     actor = rlDeterministicActorRepresentation( ...
@@ -75,7 +75,7 @@ function setup_RL_MPC()
         'ExperienceBufferLength',1e6);
 
     % Exploration
-    agentOpts.NoiseOptions.Variance = (0.08)^2; % σ ≈ 0.08 of ±0.10
+    agentOpts.NoiseOptions.Variance = (0.8)^2; % σ ≈ 0.08 of ±0.10
     agentOpts.NoiseOptions.VarianceDecayRate = 0;
 
     agent = rlDDPGAgent(actor, critic, agentOpts);
@@ -87,4 +87,3 @@ function setup_RL_MPC()
     save('rlEnv_MPC_R.mat','env','agent','lower_abs','upper_abs','initial_R','cfg');
     disp('Setup Complete')
 end
-
