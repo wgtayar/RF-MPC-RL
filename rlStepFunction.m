@@ -1,107 +1,183 @@
 function [nextObs, reward, isDone, logged] = rlStepFunction(dR_frac, logged)
 
-    % episode counter
-    persistent stepCount cfg lower_abs upper_abs
+    persistent stepCount cfg lower_abs upper_abs R_episode
     if isempty(stepCount); stepCount = 0; end
 
     if isempty(cfg) || isempty(lower_abs) || isempty(upper_abs)
         gait = 0;
         p = get_params(gait);
         initR = [p.R(1,1); p.R(2,2); p.R(3,3)];
-        lower_abs = 0.01 * initR;
-        upper_abs = 5.00 * initR;
+    
+        % New bounds
+        lower_abs = 0.5 * initR;
+        upper_abs = 3.0 * initR;
+    
         cfg.EP_STEPS = 10;
         cfg.APPLY_EVERY = 10;
-
-        % If a saved config exists, prefer it.
+    
+        % Had a problem with the paths, i think it is now fixed (changed
+        % the path to only include this directory)
         if exist('rlEnv_MPC_R.mat','file')
             try
                 S0 = load('rlEnv_MPC_R.mat');
-                if isfield(S0,'cfg'); cfg = S0.cfg; end
-                if isfield(S0,'lower_abs');  lower_abs = S0.lower_abs; end
-                if isfield(S0,'upper_abs');  upper_abs = S0.upper_abs; end
+                if isfield(S0,'lower_abs'), lower_abs = S0.lower_abs; end
+                if isfield(S0,'upper_abs'), upper_abs = S0.upper_abs; end
             catch
-                % stay with defaults
             end
         end
     end
 
-    % load/persist weights
-    if exist('LastR.mat','file')
+    if nargin >= 2 && isfield(logged,'last_R') && ~isempty(logged.last_R)
+        last_R = logged.last_R;
+    elseif exist('LastR.mat','file')
         S = load('LastR.mat','last_R');
         last_R = S.last_R;
     else
-        % first-ever call: seed from params
-        gait = 0; p = get_params(gait);
+        gait = 0; 
+        p = get_params(gait);
         last_R = [p.R(1,1); p.R(2,2); p.R(3,3)];
         save('LastR.mat','last_R');
     end
 
-    % apply new action only at episode boundary
-    shouldApply = (mod(stepCount, cfg.APPLY_EVERY) == 0);
+    shouldApply = (stepCount == 0);
 
     if shouldApply
-        % dR_frac ∈ [-0.10, 0.10]
         R_new = last_R .* (1 + dR_frac);
         R_new = min(max(R_new, lower_abs), upper_abs);
-        disp('New R:')
+
+        % Store R for the rest of the episode
+        R_episode = R_new;
+
+        disp('New R for this episode:')
         disp(R_new)
+        disp('R bounds [lower upper]:')
+        disp([lower_abs upper_abs])
+
     else
-        R_new = last_R;
+        if isempty(R_episode)
+            R_episode = last_R;
+        end
+        R_new = R_episode;
     end
 
-    % run one simulation chunk; snapshot advances
     R_all = repmat(R_new,[4,1]);
-    [te, ue, i_tot] = run_MPC_simulation(R_all, 0);
+    [te, ue, I_chunk_mean, SOC_current, feasible] = run_MPC_simulation(R_all, 0);
 
-    T_ref = 1.5;
-    U_ref = 1.5e5;
-    I_iterations = 4120;
-    % I_ref = 10.102;
-    I_ref = 1.0526;
+    % DEBUG: log RL step & MPC call
+    dbg_step = struct();
+    dbg_step.timestamp = datestr(now,'yyyy-mm-dd HH:MM:SS.FFF');
+    dbg_step.dR_frac = dR_frac;
+    dbg_step.R_new = R_new;
+    dbg_step.last_R = last_R;
+    dbg_step.shouldApply = shouldApply;
+    dbg_step.stepCount = stepCount;
+    dbg_step.EP_STEPS = cfg.EP_STEPS;
+    dbg_step.nt = te / 1.5;
+    dbg_step.nu = ue / 1.5e5;
+    dbg_step.I_chunk_mean = I_chunk_mean;
+    dbg_step.SOC_current = SOC_current;
+    dbg_step.feasible = feasible;
+
+    % Trying to read current episode index
+    if exist('RL_meta.mat','file')
+        try
+            M = load('RL_meta.mat','ep_idx');
+            if isfield(M,'ep_idx')
+                dbg_step.ep_idx = M.ep_idx;
+            end
+        catch
+        end
+    end
+
+    if exist('RL_step_log.mat','file')
+        Slog = load('RL_step_log.mat','RL_steps');
+        RL_steps = Slog.RL_steps;
+        RL_steps(end+1) = dbg_step;
+    else
+        RL_steps = dbg_step;
+    end
+    save('RL_step_log.mat','RL_steps');
+    % End debug
+
+    T_ref = 16.21;
+    U_ref = 5.4e4;
+    % I_ref = 1.526;
+
     nt = te / T_ref;
     nu = ue / U_ref;
-    i_consumed = i_tot / I_iterations;
 
-    mt = i_consumed - I_ref;
-    % alpha = 0.6;  beta = 0.4;
-    % J = alpha*nt + beta*nu;
+    % mean current
+    i_consumed = I_chunk_mean;
+
+    SOC_min = 0.2;
+    mt = SOC_current - SOC_min;
 
     disp('I consumed')
     disp(i_consumed)
+    
+    disp('SOC_current:')
+    disp(SOC_current)
 
-    disp('mt')
+    disp('mt:')
     disp(mt)
 
-    phi_m = log(1 + mt/0.88) - exp(-mt/0.88); % 0.88 is g(X)
+    w_soc = 1.0;
+    w_nt = 0.01;
+    w_nu = 0.01;
 
-    phi_trunc = fix(phi_m * 10^4) / 10^4;
+    z = 1 + mt/0.88;
+    z = max(z, 1e-6); % avoid log of <= 0
+    arg_exp = -mt/0.88;
+    arg_exp = max(min(arg_exp, 50), -50);
+    phi_m = log(z) - exp(arg_exp);
 
-    if ~isfield(logged,'prevCost') || isempty(logged.prevCost)
-        reward = 0; % baseline on first step of episode
-    else
-        reward = phi_m;
-        disp('Reward:')
+    if ~isfinite(phi_m) || ~isreal(phi_m)
+        phi_m = -50;
+    end
+    phi_m = max(min(phi_m, 5), -50);
+
+    reward = w_soc * phi_m - w_nt * nt - w_nu * nu;
+
+    % infeasible branch
+    if ~feasible
+        reward = -50;
+        logged.prevCost = phi_m;
+        nextObs = [nt; nu; SOC_current; R_new./upper_abs];
+        stepCount = 0;
+        isDone = true;
+        R_episode = [];
+
+        disp('Reward (infeasible):')
         disp(reward)
+        return;
     end
 
+    updateBestRLog(R_new, SOC_current, te, ue, reward);
+
+    % feasible branch
+    disp('Reward:')
+    disp(reward)
+    
     logged.prevCost = phi_m;
+    logged.last_R = R_new;
 
-    % next observation
-    nextObs = [nt; nu; i_consumed; R_new./upper_abs];
+    % next observation (obs dimension = 6 as R is 3x1)
+    nextObs = [nt; nu; SOC_current; R_new./upper_abs];
 
-    % persist weights only when applying
     if shouldApply
         last_R = R_new;
         save('LastR.mat','last_R');
         fprintf('dR_norm=%.3f | phi_m=%.4f | nt=%.4f | nu=%.4f | reward=%.4f\n', ...
-        norm(dR_frac), phi_m, nt, nu, reward);
+            norm(dR_frac), phi_m, nt, nu, reward);
+        fprintf('Episode R chosen: [%g %g %g]\n', R_new);
     end
 
-    % ---------- termination ----------
+    % Termination for normal RL episode
     stepCount = stepCount + 1;
     isDone = (stepCount >= cfg.EP_STEPS);
     if isDone
         stepCount = 0;
+        R_episode = [];
     end
 end
+
