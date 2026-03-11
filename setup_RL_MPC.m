@@ -81,8 +81,8 @@ function setup_RL_MPC()
     agent = rlDDPGAgent(actor, critic, agentOpts);
 
     % Episode/hold configuration used by rlStepFunction
-    cfg.EP_STEPS = 10; % steps per episode, X from g(X) in our cost fct
-    cfg.APPLY_EVERY = 10;
+    cfg.EP_STEPS = 30; % steps per episode, X from g(X) in cost fct
+    cfg.APPLY_EVERY = 30;
 
     save('rlEnv_MPC_R.mat','env','agent','lower_abs','upper_abs','initial_R','cfg');
     disp('Setup Complete')
