@@ -12,8 +12,8 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(dR_frac, logged)
         lower_abs = 0.5 * initR;
         upper_abs = 3.0 * initR;
     
-        cfg.EP_STEPS = 10;
-        cfg.APPLY_EVERY = 10;
+        cfg.EP_STEPS = 30;
+        cfg.APPLY_EVERY = 30;
     
         % Had a problem with the paths, i think it is now fixed (changed
         % the path to only include this directory)
