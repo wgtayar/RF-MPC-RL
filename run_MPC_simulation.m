@@ -1,39 +1,44 @@
-function [tracking_error_total, control_effort_total, I_chunk_mean, SOC_current, feasible] = run_MPC_simulation(R_weights, gait)
-    if nargin < 2 || isempty(gait), gait = 0; end
-    p = get_params(gait);
-
-    if nargin < 1 || isempty(R_weights)
-        R_weights = diag(p.R);
+function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
+    if nargin < 2 || isempty(gait)
+        gait = 0;
     end
+
+    p = get_params(gait);
     p.R = diag(R_weights);
+    p.vel_d = [v_cmd; 0];
+    p.acc_d = a_cmd;
+    p.yaw_d = 0;
+
+    fail_reason = '';
 
     dt_sim = p.simTimeStep;
-    SimTimeDuration = 10;
-    MAX_ITER = floor(SimTimeDuration / dt_sim);
+    max_iter = floor(cfg.CHUNK_DURATION / dt_sim);
+    rootDir = fileparts(mfilename('fullpath'));
+    snap_path = fullfile(rootDir, 'SimSnapshot_RL.mat');
 
-    snap_path = 'SimSnapshot_RL.mat';
-    feasible  = true;
+    kneeCsv = cfg.PROXY.kneeCsv;
+    betaMc = cfg.PROXY.betaMc;
+    kneeTpl = load_knee_template(kneeCsv, betaMc);
+
+    Dmc = readmatrix(kneeCsv);
+    Tmc = Dmc(end,1) - Dmc(1,1);
+
+    kneeParams = struct();
+    kneeParams.Tmc = Tmc;
+    kneeParams.alpha = cfg.PROXY.alpha;
+    kneeParams.beta = cfg.PROXY.beta;
+    kneeParams.Kt = cfg.PROXY.Kt;
+    kneeParams.eta = cfg.PROXY.eta;
+    kneeParams.Nknee = cfg.PROXY.Nknee;
+
+    Ihip4 = joint_torque_to_current(cfg.PROXY.tauHip4_joint, cfg.PROXY.Nhip, cfg.PROXY.eta, cfg.PROXY.Kt);
 
     if exist(snap_path, 'file')
-        S = load(snap_path, 'Sim');
-        Sim = S.Sim;
-
+        Ssnap = load(snap_path, 'Sim');
+        Sim = Ssnap.Sim;
         Xt = Sim.Xt;
         Ut = Sim.Ut;
-        t_abs = Sim.t;
-
-        if isfield(Sim,'t_power'), t_power = Sim.t_power; else, t_power = []; end
-        if isfield(Sim,'Pc_all'),  Pc_all = Sim.Pc_all;  else, Pc_all  = []; end
-        if isfield(Sim,'I_all'),   I_all = Sim.I_all;   else, I_all   = []; end
-
-        if isfield(Sim,'SOC')
-            SOC = Sim.SOC;
-        else
-            SOC = 1.0;
-            Sim.SOC = SOC;
-        end
     else
-        % fresh start
         if gait == 1
             [p, Xt, Ut] = fcn_bound_ref_traj(p);
         else
@@ -41,130 +46,73 @@ function [tracking_error_total, control_effort_total, I_chunk_mean, SOC_current,
         end
 
         Sim = struct();
-        Sim.t = 0.0;
+        Sim.t = 0;
         Sim.Xt = Xt;
         Sim.Ut = Ut;
-
-        t_abs = Sim.t;
-        t_power = [];
-        Pc_all = [];
-        I_all = [];
-
-        SOC = 1.0;
-        Sim.SOC = SOC;
+        Sim.current_time = [];
+        Sim.current_total = [];
+        Sim.battery = struct();
+        Sim.battery.metric_type = cfg.BATTERY.metric_type;
+        Sim.battery.metric_value = cfg.BATTERY.metric_init;
+        Sim.battery.margin_norm = cfg.BATTERY.SOC_init;
+        Sim.battery.soc_pct = 100 * cfg.BATTERY.SOC_init;
+        Sim.battery.n_series = cfg.BATTERY.n_series;
+        Sim.battery.n_parallel = cfg.BATTERY.n_parallel;
+        Sim.kneeProxyState = init_knee_proxy_state();
     end
 
-    % Debug of MPC
-    persistent mpc_call_idx
-    if isempty(mpc_call_idx); mpc_call_idx = 0; end
-    mpc_call_idx = mpc_call_idx + 1;
-
-    dbg_call = struct();
-    dbg_call.call_idx = mpc_call_idx;
-    dbg_call.timestamp = datestr(now,'yyyy-mm-dd HH:MM:SS.FFF');
-    dbg_call.gait = gait;
-    dbg_call.t_abs_start = t_abs;
-    dbg_call.R_weights = R_weights(:);
-    dbg_call.R_diag_first3 = diag(p.R(1:3,1:3));
-    dbg_call.Xt0 = Xt;
-    dbg_call.Ut0 = Ut;
-    dbg_call.SOC0 = SOC;
-    dbg_call.simTimeStep = p.simTimeStep;
-    dbg_call.predHorizon = p.predHorizon;
-    dbg_call.Tmpc = p.Tmpc;
-
-    if exist('MPC_call_log.mat','file')
-        Clog = load('MPC_call_log.mat','MPC_calls');
-        MPC_calls = Clog.MPC_calls;
-        MPC_calls(end+1) = dbg_call;
-    else
-        MPC_calls = dbg_call;
+    if ~isfield(Sim, 'current_time')
+        Sim.current_time = [];
     end
-    save('MPC_call_log.mat','MPC_calls');
-    % End Debug
+    if ~isfield(Sim, 'current_total')
+        Sim.current_total = [];
+    end
+    if ~isfield(Sim, 'battery') || isempty(Sim.battery)
+        Sim.battery.metric_type = cfg.BATTERY.metric_type;
+        Sim.battery.metric_value = cfg.BATTERY.metric_init;
+        Sim.battery.margin_norm = cfg.BATTERY.SOC_init;
+        Sim.battery.soc_pct = 100 * cfg.BATTERY.SOC_init;
+        Sim.battery.n_series = cfg.BATTERY.n_series;
+        Sim.battery.n_parallel = cfg.BATTERY.n_parallel;
+    end
+    if ~isfield(Sim, 'kneeProxyState') || isempty(Sim.kneeProxyState)
+        Sim.kneeProxyState = init_knee_proxy_state();
+    end
 
+    qp_options = optimoptions('quadprog', 'Display', 'off');
 
-    fprintf('MPC call %d: t_abs=%.3f, ||Xt||=%.3f, ||Ut||=%.3f, R=[%.3g %.3g %.3g]\n', ...
-        mpc_call_idx, t_abs, norm(Xt), norm(Ut), ...
-        R_weights(1), R_weights(2), R_weights(3));
+    tracking_error = zeros(max_iter, 1);
+    control_effort = zeros(max_iter, 1);
+    knee_t = nan(max_iter, 1);
+    knee_tau4 = nan(max_iter, 1);
+    knee_I4 = nan(max_iter, 1);
 
-    qp_options = optimoptions('quadprog','Display','off');
-
-    tracking_error = [];
-    control_effort = [];
-
-    tout = [];
-    Xout = [];
-    Uout = [];
+    feasible = true;
 
     try
-        for ii = 1:MAX_ITER
-
-            t0_abs = t_abs + dt_sim * (ii-1);
+        for ii = 1:max_iter
+            t0_abs = Sim.t + dt_sim * (ii - 1);
             t_hor = t0_abs + p.Tmpc * (0:p.predHorizon-1);
 
-            % Reference / FSM from absolute time
             if gait == 1
                 [FSM, Xd, Ud, Xt] = fcn_FSM_bound(t_hor, Xt, p);
             else
                 [FSM, Xd, Ud, Xt] = fcn_FSM(t_hor, Xt, p);
             end
 
-            % Build QP and solve
-            [H,g,Aineq,bineq,Aeq,beq] = fcn_get_QP_form_eta(Xt, Ut, Xd, Ud, p);
-            H = (H + H')/2;
+            [Sim.kneeProxyState, kneeOut] = knee_proxy_step(t0_abs, FSM(1), Sim.kneeProxyState, kneeTpl, kneeParams);
+            knee_t(ii) = kneeOut.t;
+            knee_tau4(ii) = kneeOut.tau4;
+            knee_I4(ii) = kneeOut.I4;
 
-            [zval, ~, exitflag, output] = quadprog(H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
+            [H, g, Aineq, bineq, Aeq, beq] = fcn_get_QP_form_eta(Xt, Ut, Xd, Ud, p);
+            H = (H + H') / 2;
 
-            if exitflag <= 0
-                Hsym    = (H + H')/2;
-                lam     = eig(Hsym);
-                minEigH = min(lam);
-                maxEigH = max(lam);
-                condH   = maxEigH / max(minEigH, 1e-12);
-
-                dbg_failure = struct();
-                dbg_failure.call_idx  = mpc_call_idx;
-                dbg_failure.ii = ii;
-                dbg_failure.t0_abs = t0_abs;
-                dbg_failure.Xt = Xt;
-                dbg_failure.Ut = Ut;
-                dbg_failure.Xd = Xd;
-                dbg_failure.Ud = Ud;
-                dbg_failure.FSM = FSM;
-                dbg_failure.t_hor = t_hor;
-                dbg_failure.R_weights = R_weights;
-                dbg_failure.H = H;
-                dbg_failure.g = g;
-                dbg_failure.Aineq = Aineq;
-                dbg_failure.bineq = bineq;
-                dbg_failure.Aeq = Aeq;
-                dbg_failure.beq = beq;
-                dbg_failure.minEigH = minEigH;
-                dbg_failure.maxEigH = maxEigH;
-                dbg_failure.condH = condH;
-                dbg_failure.exitflag = exitflag;
-                dbg_failure.output = output;
-
-                save('dbg_failure_last.mat','dbg_failure');
-
-                warning("quadprog failed (exitflag=%d): %s", exitflag, output.message);
-
-                tracking_error_total = 1e3;
-                control_effort_total = 7.5e7;
-                I_chunk_mean = 50 * 1.0526;
-
-                if ~exist('SOC','var') || isempty(SOC)
-                    SOC = 1.0;
-                end
-                SOC_current = SOC;
-                Sim.Pc_all = Pc_all;
-                Sim.I_all = I_all;
-                Sim.SOC = SOC;
-                save(snap_path,'Sim');
-
+            [zval, ~, exitflag] = quadprog(H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
+            if exitflag <= 0 || isempty(zval)
                 feasible = false;
-                return;
+                fail_reason = 'quadprog';
+                break
             end
 
             Ut = Ut + zval(1:12);
@@ -173,84 +121,85 @@ function [tracking_error_total, control_effort_total, I_chunk_mean, SOC_current,
             p.p_ext = p_ext;
             u_ext = 0 * u_ext;
 
-            [t_chunk, X_chunk] = ode45(@(t,X) dynamics_SRB(t, X, Ut, Xd, u_ext, p), ...
-                                       [t0_abs, t0_abs + dt_sim], Xt);
-
+            [~, X_chunk] = ode45(@(t, X) dynamics_SRB(t, X, Ut, Xd, u_ext, p), [t0_abs, t0_abs + dt_sim], Xt);
             Xt = X_chunk(end,:).';
 
             if any(isnan(Xt)) || any(isinf(Xt))
-                warning("dynamics produced NaN/Inf");
-
-                tracking_error_total = 1e6;
-                control_effort_total = 1e6;
-                I_chunk_mean = 1.0526;
                 feasible = false;
-
-                Sim.t_power = Pc_all;
-                Sim.I_all = I_all;
-                save(snap_path,'Sim');
-                return;
+                fail_reason = 'state_invalid';
+                break
             end
 
-            tracking_error = [tracking_error; sum((Xt - Xd(:,1)).^2)];
-            control_effort = [control_effort; sum(Ut.^2)];
-
-            if ii == 1
-                idx = 1:length(t_chunk);
-            else
-                idx = 2:length(t_chunk);
-            end
-
-            tout = [tout; t_chunk(idx)];
-            Xout = [Xout; X_chunk(idx,:)];
-            Uout = [Uout; repmat(Ut.', numel(idx), 1)];
+            tracking_error(ii) = sum((Xt - Xd(:,1)).^2);
+            control_effort(ii) = sum(Ut.^2);
         end
+    catch ME
+        feasible = false;
+        fail_reason = ME.identifier;
+    end
 
-        Sim.t = t_abs + MAX_ITER * dt_sim;
+    out = struct();
+
+    if ~feasible
         Sim.Xt = Xt;
         Sim.Ut = Ut;
-
-        % Power, Current, SOC
-        if ~isempty(tout)
-            [SOC_current, I_chunk_mean, t_power, Pc_all, I_all] = ...
-                update_SOC_from_power_RL(tout, Xout, Uout, t_power, Pc_all, p);
-        else
-            % no new samples
-            SOC_current = SOC;
-            I_chunk_mean = 0.0;
-        end
-
-        Sim.SOC = SOC_current;
-        Sim.SOC_current = SOC_current;
-        Sim.t_power = t_power;
-        Sim.Pc_all = Pc_all;
-        Sim.I_all = I_all;
-        Sim.I_chunk_mean = I_chunk_mean;
-
-        tracking_error_total = sum(tracking_error);
-        control_effort_total = sum(control_effort);
-
-        save(snap_path,'Sim');
-
-        fprintf('SOC_current (RL) = %.8f\n', SOC_current);
-
-    catch ME
-        fprintf("run_MPC_simulation exception: %s\n", ME.message);
-
-        Sim.t_power = t_power;
-        Sim.Pc_all = Pc_all;
-        Sim.I_all = I_all;
-
-        if ~exist('SOC','var') || isempty(SOC)
-            SOC = 1.0;
-        end
-        Sim.SOC = SOC;
-        save(snap_path,'Sim');
-
-        tracking_error_total = 1e3;
-        control_effort_total = 1e7;
-        I_chunk_mean = 50 * 1.0526;
-        SOC_current = SOC;
-        feasible = false;
+        save(snap_path, 'Sim');
+    
+        out.tracking_error_total = NaN;
+        out.control_effort_total = NaN;
+        out.charge_total = 0;
+        out.current_duration = 0;
+        out.battery = Sim.battery;
+        out.feasible = false;
+        out.fail_reason = fail_reason;
+        return
     end
+
+    valid = isfinite(knee_t) & isfinite(knee_I4);
+    t_chunk = knee_t(valid);
+    I_knee = knee_I4(valid);
+
+    if numel(t_chunk) >= 2
+        [t_chunk, idx] = sort(t_chunk);
+        I_knee = I_knee(idx);
+        I_total = I_knee + Ihip4;
+
+        if ~isempty(Sim.current_time)
+            keep = t_chunk > Sim.current_time(end);
+            t_chunk = t_chunk(keep);
+            I_total = I_total(keep);
+        end
+
+        Sim.current_time = [Sim.current_time; t_chunk];
+        Sim.current_total = [Sim.current_total; I_total];
+
+        if numel(t_chunk) >= 2
+            charge_total = trapz(t_chunk, abs(I_total));
+            current_duration = t_chunk(end) - t_chunk(1);
+        else
+            charge_total = 0;
+            current_duration = 0;
+        end
+    else
+        charge_total = 0;
+        current_duration = 0;
+    end
+
+    battery = evaluate_battery_feedback(Sim.current_time, Sim.current_total, cfg.BATTERY, Sim.battery);
+    Sim.battery = battery;
+    Sim.bms_input = battery.bms_input;
+
+    Sim.t = Sim.t + cfg.CHUNK_DURATION;
+    Sim.Xt = Xt;
+    Sim.Ut = Ut;
+
+    save(snap_path, 'Sim');
+
+    out.tracking_error_total = sum(tracking_error);
+    out.control_effort_total = sum(control_effort);
+    out.charge_total = charge_total;
+    out.current_duration = current_duration;
+    out.battery = battery;
+    out.feasible = true;
+    out.fail_reason = '';
 end

@@ -1,183 +1,165 @@
-function [nextObs, reward, isDone, logged] = rlStepFunction(dR_frac, logged)
+function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
+    rootDir = fileparts(mfilename('fullpath'));
+    cfgPath = fullfile(rootDir, 'rlEnv_MPC_R.mat');
+    lastRPath = fullfile(rootDir, 'LastR.mat');
 
-    persistent stepCount cfg lower_abs upper_abs R_episode
-    if isempty(stepCount); stepCount = 0; end
+    S = load(cfgPath, 'cfg', 'lower_abs', 'upper_abs');
+    cfg = S.cfg;
+    lower_abs = S.lower_abs;
+    upper_abs = S.upper_abs;
 
-    if isempty(cfg) || isempty(lower_abs) || isempty(upper_abs)
-        gait = 0;
-        p = get_params(gait);
-        initR = [p.R(1,1); p.R(2,2); p.R(3,3)];
-    
-        % New bounds
-        lower_abs = 0.5 * initR;
-        upper_abs = 3.0 * initR;
-    
-        cfg.EP_STEPS = 30;
-        cfg.APPLY_EVERY = 30;
-    
-        % Had a problem with the paths, i think it is now fixed (changed
-        % the path to only include this directory)
-        if exist('rlEnv_MPC_R.mat','file')
-            try
-                S0 = load('rlEnv_MPC_R.mat');
-                if isfield(S0,'lower_abs'), lower_abs = S0.lower_abs; end
-                if isfield(S0,'upper_abs'), upper_abs = S0.upper_abs; end
-            catch
+    dR_frac = action(1:3);
+    gamma_v = action(4);
+    gamma_a = action(5);
+
+    R_new = logged.last_R .* (1 + dR_frac);
+    R_new = min(max(R_new, lower_abs), upper_abs);
+    R_all = repmat(R_new, [4, 1]);
+
+    [v_exec, a_exec] = apply_command_governor(logged.v_req, logged.a_req, gamma_v, gamma_a, cfg);
+
+    decision_idx = logged.step_idx + 1;
+    total_chunks = cfg.EP_STEPS * cfg.APPLY_EVERY;
+    soc_start = logged.battery.soc_pct;
+
+    te_all = zeros(cfg.APPLY_EVERY, 1);
+    ue_all = zeros(cfg.APPLY_EVERY, 1);
+    Q_all = zeros(cfg.APPLY_EVERY, 1);
+    T_all = zeros(cfg.APPLY_EVERY, 1);
+    feasible = true;
+    fail_reason = '';
+    battery = logged.battery;
+
+    for k = 1:cfg.APPLY_EVERY
+        simOut = run_MPC_simulation(R_all, 0, v_exec, a_exec, cfg);
+
+        te_all(k) = simOut.tracking_error_total;
+        ue_all(k) = simOut.control_effort_total;
+        Q_all(k) = simOut.charge_total;
+        T_all(k) = simOut.current_duration;
+        battery = simOut.battery;
+
+        chunk_abs = (decision_idx - 1) * cfg.APPLY_EVERY + k;
+        mission_time = chunk_abs * cfg.CHUNK_DURATION;
+
+        if T_all(k) > 0
+            Ieq_chunk = Q_all(k) / T_all(k);
+        else
+            Ieq_chunk = cfg.IEQ_REF;
+        end
+
+        if isfield(cfg, 'LOG') && cfg.LOG.enable && cfg.LOG.print_chunk
+            fprintf('[EP %d | DEC %d/%d | CHUNK %d/%d | %d/%d] t=%.1f s, Q=%.3f A*s, Ieq=%.3f A, SOC=%.2f%%\n', ...
+                logged.episode_idx, decision_idx, cfg.EP_STEPS, chunk_abs, total_chunks, k, cfg.APPLY_EVERY, ...
+                mission_time, Q_all(k), Ieq_chunk, battery.soc_pct);
+        end
+
+        if ~simOut.feasible
+            feasible = false;
+            fail_reason = simOut.fail_reason;
+
+            if isfield(cfg, 'LOG') && cfg.LOG.enable
+                fprintf('[EP %d | DEC %d/%d | CHUNK %d/%d] FAIL reason=%s\n', ...
+                    logged.episode_idx, decision_idx, cfg.EP_STEPS, chunk_abs, total_chunks, fail_reason);
             end
+            break
         end
     end
 
-    if nargin >= 2 && isfield(logged,'last_R') && ~isempty(logged.last_R)
-        last_R = logged.last_R;
-    elseif exist('LastR.mat','file')
-        S = load('LastR.mat','last_R');
-        last_R = S.last_R;
+    T_window = sum(T_all);
+    if T_window > 0
+        Ieq_window = sum(Q_all) / T_window;
     else
-        gait = 0; 
-        p = get_params(gait);
-        last_R = [p.R(1,1); p.R(2,2); p.R(3,3)];
-        save('LastR.mat','last_R');
+        Ieq_window = cfg.IEQ_REF;
     end
 
-    shouldApply = (stepCount == 0);
+    valid_idx = T_all > 0;
 
-    if shouldApply
-        R_new = last_R .* (1 + dR_frac);
-        R_new = min(max(R_new, lower_abs), upper_abs);
+    window = struct();
+    window.feasible = feasible;
 
-        % Store R for the rest of the episode
-        R_episode = R_new;
-
-        disp('New R for this episode:')
-        disp(R_new)
-        disp('R bounds [lower upper]:')
-        disp([lower_abs upper_abs])
-
+    if any(valid_idx)
+        window.tracking_error_mean = mean(te_all(valid_idx), 'omitnan');
+        window.control_effort_mean = mean(ue_all(valid_idx), 'omitnan');
     else
-        if isempty(R_episode)
-            R_episode = last_R;
-        end
-        R_new = R_episode;
+        window.tracking_error_mean = NaN;
+        window.control_effort_mean = NaN;
     end
 
-    R_all = repmat(R_new,[4,1]);
-    [te, ue, I_chunk_mean, SOC_current, feasible] = run_MPC_simulation(R_all, 0);
-
-    % DEBUG: log RL step & MPC call
-    dbg_step = struct();
-    dbg_step.timestamp = datestr(now,'yyyy-mm-dd HH:MM:SS.FFF');
-    dbg_step.dR_frac = dR_frac;
-    dbg_step.R_new = R_new;
-    dbg_step.last_R = last_R;
-    dbg_step.shouldApply = shouldApply;
-    dbg_step.stepCount = stepCount;
-    dbg_step.EP_STEPS = cfg.EP_STEPS;
-    dbg_step.nt = te / 1.5;
-    dbg_step.nu = ue / 1.5e5;
-    dbg_step.I_chunk_mean = I_chunk_mean;
-    dbg_step.SOC_current = SOC_current;
-    dbg_step.feasible = feasible;
-
-    % Trying to read current episode index
-    if exist('RL_meta.mat','file')
-        try
-            M = load('RL_meta.mat','ep_idx');
-            if isfield(M,'ep_idx')
-                dbg_step.ep_idx = M.ep_idx;
-            end
-        catch
-        end
+    if isempty(window.tracking_error_mean) || isnan(window.tracking_error_mean)
+        window.tracking_error_mean = 1e3;
+    end
+    if isempty(window.control_effort_mean) || isnan(window.control_effort_mean)
+        window.control_effort_mean = 1e6;
     end
 
-    if exist('RL_step_log.mat','file')
-        Slog = load('RL_step_log.mat','RL_steps');
-        RL_steps = Slog.RL_steps;
-        RL_steps(end+1) = dbg_step;
-    else
-        RL_steps = dbg_step;
-    end
-    save('RL_step_log.mat','RL_steps');
-    % End debug
+    window.Ieq_window = Ieq_window;
+    window.battery = battery;
+    window.v_req = logged.v_req;
+    window.a_req = logged.a_req;
+    window.v_exec = v_exec;
+    window.a_exec = a_exec;
 
-    T_ref = 16.21;
-    U_ref = 5.4e4;
-    % I_ref = 1.526;
+    soc_end = battery.soc_pct;
+    progress_next = decision_idx / cfg.EP_STEPS;
 
-    nt = te / T_ref;
-    nu = ue / U_ref;
+    window.progress_frac = progress_next;
+    window.soc_start_pct = soc_start;
+    window.soc_end_pct = soc_end;
+    window.completed_episode = feasible && (decision_idx >= cfg.EP_STEPS);
 
-    % mean current
-    i_consumed = I_chunk_mean;
-
-    SOC_min = 0.2;
-    mt = SOC_current - SOC_min;
-
-    disp('I consumed')
-    disp(i_consumed)
-    
-    disp('SOC_current:')
-    disp(SOC_current)
-
-    disp('mt:')
-    disp(mt)
-
-    w_soc = 1.0;
-    w_nt = 0.01;
-    w_nu = 0.01;
-
-    z = 1 + mt/0.88;
-    z = max(z, 1e-6); % avoid log of <= 0
-    arg_exp = -mt/0.88;
-    arg_exp = max(min(arg_exp, 50), -50);
-    phi_m = log(z) - exp(arg_exp);
-
-    if ~isfinite(phi_m) || ~isreal(phi_m)
-        phi_m = -50;
-    end
-    phi_m = max(min(phi_m, 5), -50);
-
-    reward = w_soc * phi_m - w_nt * nt - w_nu * nu;
-
-    % infeasible branch
     if ~feasible
-        reward = -50;
-        logged.prevCost = phi_m;
-        nextObs = [nt; nu; SOC_current; R_new./upper_abs];
-        stepCount = 0;
-        isDone = true;
-        R_episode = [];
-
-        disp('Reward (infeasible):')
-        disp(reward)
-        return;
+        window.terminal_reason = 'infeasible';
+    elseif battery.margin_norm <= cfg.BATTERY.terminal_margin
+        window.terminal_reason = 'battery_terminal';
+    elseif decision_idx >= cfg.EP_STEPS
+        window.terminal_reason = 'max_steps';
+    else
+        window.terminal_reason = '';
     end
 
-    updateBestRLog(R_new, SOC_current, te, ue, reward);
+    [reward, info] = compute_rl_reward(window, cfg);
 
-    % feasible branch
-    disp('Reward:')
-    disp(reward)
-    
-    logged.prevCost = phi_m;
+    nt = window.tracking_error_mean / cfg.TRACK_REF;
+    nu = window.control_effort_mean / cfg.EFFORT_REF;
+
+    window_charge = sum(Q_all);
+    window_time = sum(T_all);
+    dsoc = soc_end - soc_start;
+
+    logged.step_idx = logged.step_idx + 1;
     logged.last_R = R_new;
+    logged.v_exec = v_exec;
+    logged.a_exec = a_exec;
+    logged.battery = battery;
+    logged.window = info;
+    logged.episode_charge_total = logged.episode_charge_total + window_charge;
+    logged.episode_time_total = logged.episode_time_total + window_time;
 
-    % next observation (obs dimension = 6 as R is 3x1)
-    nextObs = [nt; nu; SOC_current; R_new./upper_abs];
+    last_R = R_new;
+    save(lastRPath, 'last_R');
 
-    if shouldApply
-        last_R = R_new;
-        save('LastR.mat','last_R');
-        fprintf('dR_norm=%.3f | phi_m=%.4f | nt=%.4f | nu=%.4f | reward=%.4f\n', ...
-            norm(dR_frac), phi_m, nt, nu, reward);
-        fprintf('Episode R chosen: [%g %g %g]\n', R_new);
+    nextObs = build_rl_observation(nt, nu, battery, progress_next, logged.v_req, logged.a_req, v_exec, a_exec, R_new, lower_abs, upper_abs, cfg);
+
+    isDone = ~feasible || battery.margin_norm <= cfg.BATTERY.terminal_margin || logged.step_idx >= cfg.EP_STEPS;
+
+    if isfield(cfg, 'LOG') && cfg.LOG.enable && cfg.LOG.print_decision
+        fprintf('[EP %d | DEC %d/%d END] dR=[%.3f %.3f %.3f], gv=%.3f, ga=%.3f, v=%.3f, a=%.3f, SOC: %.2f%% -> %.2f%% (dSOC=%.2f%%), Q=%.3f A*s, Ieq=%.3f A, reward=%.4f, feasible=%d\n', ...
+            logged.episode_idx, decision_idx, cfg.EP_STEPS, ...
+            dR_frac(1), dR_frac(2), dR_frac(3), gamma_v, gamma_a, v_exec, a_exec, ...
+            soc_start, soc_end, dsoc, window_charge, Ieq_window, reward, feasible);
     end
 
-    % Termination for normal RL episode
-    stepCount = stepCount + 1;
-    isDone = (stepCount >= cfg.EP_STEPS);
-    if isDone
-        stepCount = 0;
-        R_episode = [];
+    if isDone && isfield(cfg, 'LOG') && cfg.LOG.enable && cfg.LOG.print_episode
+        if ~feasible
+            reason = 'infeasible';
+        elseif battery.margin_norm <= cfg.BATTERY.terminal_margin
+            reason = 'battery_terminal';
+        else
+            reason = 'max_steps';
+        end
+
+        fprintf('[EP %d END] reason=%s, final_SOC=%.2f%%, total_Q=%.3f A*s, total_time=%.1f s\n\n', ...
+            logged.episode_idx, reason, battery.soc_pct, logged.episode_charge_total, logged.episode_time_total);
     end
 end
-

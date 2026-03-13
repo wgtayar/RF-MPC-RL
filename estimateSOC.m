@@ -1,115 +1,207 @@
-function [SOC_estimated, SOC_final] = estimateSOC(time, I_total, V_batt, C_nom, SOC_init) 
+function [SOC] = estimateSOC(time, I_total, V_batt, C_nom, SOC_init, doPlot)
 
-    step_time = [0; diff(time)];
-
-    params = readtable('updated_params.xlsx');
-    valid_idx = isfinite(params.SOC) & isfinite(params.OCV);
-    SOC_lookup = params.SOC(valid_idx);
-    OCV = params.OCV(valid_idx);
-    R0 = params.R0(valid_idx);
-    R1 = params.R1(valid_idx);
-    C1 = params.C1(valid_idx);
-    R2 = params.R2(valid_idx);
-    C2 = params.C2(valid_idx);
-    R3 = params.R3(valid_idx);
-    C3 = params.C3(valid_idx);
-
-    R0_func = @(soc) manualInterp(SOC_lookup, R0, soc);
-    R1_func = @(soc) manualInterp(SOC_lookup, R1, soc);
-    C1_func = @(soc) manualInterp(SOC_lookup, C1, soc);
-    R2_func = @(soc) manualInterp(SOC_lookup, R2, soc);
-    C2_func = @(soc) manualInterp(SOC_lookup, C2, soc);
-    R3_func = @(soc) manualInterp(SOC_lookup, R3, soc);
-    C3_func = @(soc) manualInterp(SOC_lookup, C3, soc);
-    Voc_offset = 0.01;
-    Voc_func = @(soc) interp1(SOC_lookup, OCV, soc, 'linear', 'extrap') - Voc_offset;
-
-
-    % Kalman filter parameters
-    P = 1;
-    Q = 1e-8;
-    % R_kf = 2e-1;
-    R_kf = 50;
-
-    % Initialization
-    N = length(time);
-    SOC = SOC_init;
-    SOC_estimated = zeros(N, 1);
-    V_RC1 = 0; V_RC2 = 0; V_RC3 = 0;
-
-    % EKF loop
-    for k = 1:N
-        dt = step_time(k);
-        I_k = I_total(k);
-
-        % Prediction Step
-        SOC_pred = SOC - (I_k * dt / (C_nom * 3600));
-        SOC_pred = max(0, min(1, SOC_pred));
-        P_pred = P + Q;
-
-        R0_k = R0_func(SOC_pred * 100);
-        R1_k = R1_func(SOC_pred * 100);
-        C1_k = C1_func(SOC_pred * 100);
-        R2_k = R2_func(SOC_pred * 100);
-        C2_k = C2_func(SOC_pred * 100);
-        R3_k = R3_func(SOC_pred * 100);
-        C3_k = C3_func(SOC_pred * 100);
-
-        alpha1 = exp(-dt / (R1_k * C1_k));
-        alpha2 = exp(-dt / (R2_k * C2_k));
-        alpha3 = exp(-dt / (R3_k * C3_k));
-
-        V_RC1 = alpha1 * V_RC1 + (1 - alpha1) * I_k * R1_k;
-        V_RC2 = alpha2 * V_RC2 + (1 - alpha2) * I_k * R2_k;
-        V_RC3 = alpha3 * V_RC3 + (1 - alpha3) * I_k * R3_k;
-
-        % Predicted voltage
-        V_pred = Voc_func(SOC_pred * 100) - (R0_k * I_k) - V_RC1 - V_RC2 - V_RC3;
-
-        % Kalman Gain
-        K = P_pred / (P_pred + R_kf);
-
-        % Update Step
-        SOC = SOC_pred + K * (V_batt(k) - V_pred);
-        SOC = max(0, min(1, SOC));
-        SOC_estimated(k) = SOC;
-
-        P = (1 - K) * P_pred;
-    end
-
-    SOC_final = SOC;
-    fprintf('SOC from estimator (final) = %.8f\n', SOC);
-    
-    if nargout == 0
-        figure;
-        plot(time, SOC_estimated * 100, 'k', 'LineWidth', 2);
-        xlabel('Time (s)');
-        ylabel('SOC (%)');
-        title('Estimated SOC using EKF');
-        grid on;
-    
-        figure;
-        plot(time, V_batt, 'r','LineWidth', 2);
-        hold on;
-        % plot(time, V_pred, 'b','LineWidth', 2);
-        % legend('Measured Voltage', 'Predicted Voltage');
-        title('Battery Terminal Voltage');
-        xlabel('Time (s)');
-    end
+if nargin < 6
+    doPlot = false;
 end
 
-% Helper interpolation function
-function val = manualInterp(SOC_vector, param_vector, soc)
-    if soc <= SOC_vector(1)
-        val = param_vector(1);
-    elseif soc >= SOC_vector(end)
-        val = param_vector(end);
-    else
-        idx = find(SOC_vector <= soc, 1, 'last');
-        soc_low = SOC_vector(idx);
-        soc_high = SOC_vector(idx + 1);
-        val_low = param_vector(idx);
-        val_high = param_vector(idx + 1);
-        val = val_low + (val_high - val_low) * (soc - soc_low) / (soc_high - soc_low);
-    end
+N0 = min([length(time), length(I_total), length(V_batt)]);
+time    = time   (1:N0);
+I_total = I_total(1:N0);
+V_batt  = V_batt (1:N0);
+
+N = length(time);
+
+% Load parameters
+params = readtable('our params.xlsx');
+valid_idx = isfinite(params.SOC) & isfinite(params.OCV);
+
+SOC_table = params.SOC(valid_idx);
+OCV_table = params.OCV(valid_idx);
+
+R0_table = params.R0(valid_idx);
+R1_table = params.R1(valid_idx); C1_table = params.C1(valid_idx);
+R2_table = params.R2(valid_idx); C2_table = params.C2(valid_idx);
+R3_table = params.R3(valid_idx); C3_table = params.C3(valid_idx);
+
+SOC_min = 0.1;
+SOC_max = 1.0;
+
+dOCV_table = gradient(OCV_table) ./ gradient(SOC_table);
+
+% Manual interpolation
+function val = manualInterp(SOC_vector,param_vector,soc)
+
+soc = max(SOC_min,min(SOC_max,soc));
+
+if soc <= SOC_vector(1)
+    val = param_vector(1);
+
+elseif soc >= SOC_vector(end)
+    val = param_vector(end);
+
+else
+    idx = find(SOC_vector<=soc,1,'last');
+
+    soc_low = SOC_vector(idx);
+    soc_high = SOC_vector(idx+1);
+
+    val_low = param_vector(idx);
+    val_high = param_vector(idx+1);
+
+    val = val_low + (val_high-val_low)*(soc-soc_low)/(soc_high-soc_low);
+end
+end
+
+% Parameter functions
+OCV_fun = @(soc) interp1(SOC_table, OCV_table, soc, 'pchip');
+
+R0_fun = @(soc) manualInterp(SOC_table,R0_table,soc);
+
+R1_fun = @(soc) manualInterp(SOC_table,R1_table,soc);
+C1_fun = @(soc) manualInterp(SOC_table,C1_table,soc);
+
+R2_fun = @(soc) manualInterp(SOC_table,R2_table,soc);
+C2_fun = @(soc) manualInterp(SOC_table,C2_table,soc);
+
+R3_fun = @(soc) manualInterp(SOC_table,R3_table,soc);
+C3_fun = @(soc) manualInterp(SOC_table,C3_table,soc);
+
+dOCV_fun = @(soc) manualInterp(SOC_table, dOCV_table, soc);
+
+% EKF noise parameters
+q_soc  = 1e-7;
+q_vrc1 = 1e-3;
+q_vrc2 = 1e-3;
+q_vrc3 = 1e-3;
+
+Q = diag([q_soc q_vrc1 q_vrc2 q_vrc3]);
+
+R_kf = 1e-3;
+
+P = diag([1e-4 1e-3 1e-3 1e-3]);
+
+% Initialization
+step_time = [0; diff(time)];
+
+x = zeros(4,1);
+
+x(1) = SOC_init;
+x(2:4) = 0;
+
+x_prior = zeros(4,N);
+x_post  = zeros(4,N);
+
+Vpred = zeros(N,1);
+P_trace = zeros(N,1);
+
+SOC_CC = zeros(N,1);
+SOC_CC(1) = x(1);
+
+% EKF loop
+for k=1:N
+
+dt = step_time(k);
+if dt<=0
+dt = 1e-6;
+end
+
+I_k = I_total(k);
+
+% Prediction step
+SOC_pred = x(1) - I_k*dt/(C_nom*3600);
+SOC_pred = max(SOC_min,min(SOC_max,SOC_pred));
+
+R0_k = R0_fun(SOC_pred);
+
+R1_k = R1_fun(SOC_pred); C1_k = C1_fun(SOC_pred);
+R2_k = R2_fun(SOC_pred); C2_k = C2_fun(SOC_pred);
+R3_k = R3_fun(SOC_pred); C3_k = C3_fun(SOC_pred);
+
+a1 = exp(-dt/(R1_k*C1_k)); b1 = (1-a1)*R1_k;
+a2 = exp(-dt/(R2_k*C2_k)); b2 = (1-a2)*R2_k;
+a3 = exp(-dt/(R3_k*C3_k)); b3 = (1-a3)*R3_k;
+
+Vrc1_pred = a1*x(2) + b1*I_k;
+Vrc2_pred = a2*x(3) + b2*I_k;
+Vrc3_pred = a3*x(4) + b3*I_k;
+
+x_pred = [SOC_pred; Vrc1_pred; Vrc2_pred; Vrc3_pred];
+
+x_prior(:,k) = x_pred;
+
+% Covariance prediction
+F = eye(4);
+F(2,2)=a1;
+F(3,3)=a2;
+F(4,4)=a3;
+
+P_pred = F*P*F' + Q;
+
+% Voltage prediction
+V_pred = OCV_fun(SOC_pred) - R0_k*I_k - Vrc1_pred - Vrc2_pred - Vrc3_pred;
+Vpred(k) = V_pred;
+
+% Jacobian
+dOCV = dOCV_fun(SOC_pred);
+
+H = zeros(1,4);
+H(1) = dOCV;
+H(2) = -1;
+H(3) = -1;
+H(4) = -1;
+
+% Kalman gain
+S = H*P_pred*H' + R_kf;
+
+K = (P_pred*H')/S;
+
+% Update
+e = V_batt(k) - V_pred;
+
+x = x_pred + K*e;
+
+x(1) = max(SOC_min,min(SOC_max,x(1)));
+
+P = (eye(4)-K*H)*P_pred;
+
+x_post(:,k) = x;
+
+P_trace(k) = trace(P);
+
+% Coulomb counting
+if k>1
+
+SOC_CC(k) = SOC_CC(k-1) - I_k*dt/(C_nom*3600);
+SOC_CC(k) = max(SOC_min,min(SOC_max,SOC_CC(k)));
+SOC_CC(1) = SOC_init;
+
+else
+
+SOC_CC(k) = x(1);
+
+end
+
+end
+
+SOC = x_post(1,:)*100;
+SOC(1) = SOC_init*100;
+
+% Plots
+if doPlot
+    time_s = time - time(1);
+
+    figure
+    plot(time_s, SOC, 'r', 'LineWidth', 1.5);
+    hold on
+    plot(time_s, SOC_CC * 100, 'b--', 'LineWidth', 1.5)
+    xlabel('Time (s)')
+    ylabel('SOC (%)')
+    legend('EKF', 'Coulomb Counting')
+    grid on
+    title('SOC Estimation')
+    
+    fprintf('Final EKF SOC: %.4f / Coulomb Counting SOC: %.4f\n', x(1), SOC_CC(end));
+end
+
+
 end
