@@ -90,6 +90,15 @@ function setup_RL_MPC()
     cfg.LOG.print_chunk = true;
     cfg.LOG.print_decision = true;
     cfg.LOG.print_episode = true;
+
+    cfg.RUN.enabled = false;
+    cfg.RUN.root_dir = '';
+    cfg.RUN.run_dir = '';
+    cfg.RUN.run_stamp = '';
+    cfg.RUN.log_file = '';
+    cfg.RUN.checkpoint_file = '';
+    
+    cfg.CHECKPOINT.every_decisions = 3;
     
     save(cfgPath, 'lower_abs', 'upper_abs', 'initial_R', 'cfg');
 

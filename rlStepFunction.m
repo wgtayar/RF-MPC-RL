@@ -143,6 +143,52 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
     isDone = ~feasible || battery.margin_norm <= cfg.BATTERY.terminal_margin || logged.step_idx >= cfg.EP_STEPS;
 
+    if isfield(cfg, 'RUN') && cfg.RUN.enabled && isfield(cfg, 'CHECKPOINT')
+        shouldSaveCheckpoint = mod(decision_idx, cfg.CHECKPOINT.every_decisions) == 0 || isDone;
+    
+        if shouldSaveCheckpoint
+            checkpoint = struct();
+            checkpoint.timestamp = datestr(now, 'dd-mm-yyyy HH:MM:SS');
+            checkpoint.episode_idx = logged.episode_idx;
+            checkpoint.decision_idx = decision_idx;
+            checkpoint.progress_frac = progress_next;
+    
+            checkpoint.action = action(:).';
+            checkpoint.dR_frac = dR_frac(:).';
+            checkpoint.gamma_v = gamma_v;
+            checkpoint.gamma_a = gamma_a;
+    
+            checkpoint.R_new = R_new(:).';
+            checkpoint.v_req = logged.v_req;
+            checkpoint.a_req = logged.a_req;
+            checkpoint.v_exec = v_exec;
+            checkpoint.a_exec = a_exec;
+    
+            checkpoint.soc_start_pct = soc_start;
+            checkpoint.soc_end_pct = soc_end;
+            checkpoint.dsoc_pct = soc_end - soc_start;
+    
+            checkpoint.window_charge_As = window_charge;
+            checkpoint.window_time_s = window_time;
+            checkpoint.Ieq_window_A = Ieq_window;
+    
+            checkpoint.reward = reward;
+            checkpoint.feasible = feasible;
+            checkpoint.fail_reason = fail_reason;
+            checkpoint.terminal_reason = window.terminal_reason;
+            checkpoint.completed_episode = window.completed_episode;
+    
+            checkpoint.nt = nt;
+            checkpoint.nu = nu;
+            checkpoint.reward_info = info;
+    
+            checkpoint.episode_charge_total_As = logged.episode_charge_total;
+            checkpoint.episode_time_total_s = logged.episode_time_total;
+    
+            save_rl_checkpoint(cfg.RUN.checkpoint_file, checkpoint);
+        end
+    end
+
     if isfield(cfg, 'LOG') && cfg.LOG.enable && cfg.LOG.print_decision
         fprintf('[EP %d | DEC %d/%d END] dR=[%.3f %.3f %.3f], gv=%.3f, ga=%.3f, v=%.3f, a=%.3f, SOC: %.2f%% -> %.2f%% (dSOC=%.2f%%), Q=%.3f A*s, Ieq=%.3f A, reward=%.4f, feasible=%d\n', ...
             logged.episode_idx, decision_idx, cfg.EP_STEPS, ...
