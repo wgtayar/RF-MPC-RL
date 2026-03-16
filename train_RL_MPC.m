@@ -20,6 +20,10 @@ function train_RL_MPC()
 
     logFile = fullfile(runDir, ['training_log_' runStamp '.txt']);
     finalAgentFile = fullfile(runDir, ['final_RL_agent_' runStamp '.mat']);
+    savedAgentsDir = fullfile(runDir, 'saved_agents');
+    if ~exist(savedAgentsDir, 'dir')
+        mkdir(savedAgentsDir);
+    end
 
     cfg.LOG.enable = true;
     cfg.RUN.enabled = true;
@@ -28,6 +32,7 @@ function train_RL_MPC()
     cfg.RUN.run_stamp = runStamp;
     cfg.RUN.log_file = logFile;
     cfg.RUN.checkpoint_file = '';
+    cfg.RUN.saved_agents_dir = savedAgentsDir;
 
     save(cfgPath, 'cfg', '-append');
 
@@ -43,13 +48,17 @@ function train_RL_MPC()
         600, cfg.EP_STEPS, cfg.APPLY_EVERY, cfg.EP_STEPS * cfg.APPLY_EVERY);
     fprintf('[RUN DIR] %s\n', runDir);
     fprintf('[LOG FILE] %s\n', logFile);
+    fprintf('[SAVED AGENTS DIR] %s\n', savedAgentsDir);
 
     trainOpts = rlTrainingOptions( ...
         'MaxEpisodes', 600, ...
         'MaxStepsPerEpisode', cfg.EP_STEPS, ...
         'ScoreAveragingWindowLength', 20, ...
         'Verbose', true, ...
-        'Plots', 'training-progress');
+        'Plots', 'training-progress', ...
+        'SaveAgentCriteria', 'EpisodeFrequency', ...
+        'SaveAgentValue', 1, ...
+        'SaveAgentDirectory', savedAgentsDir);
 
     stats = train(agent, env, trainOpts);
 
