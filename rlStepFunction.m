@@ -31,6 +31,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     battery = logged.battery;
 
     for k = 1:cfg.APPLY_EVERY
+        battery_before_chunk = battery;
         simOut = run_MPC_simulation(R_all, 0, v_exec, a_exec, cfg);
 
         te_all(k) = simOut.tracking_error_total;
@@ -41,6 +42,71 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
         chunk_abs = (decision_idx - 1) * cfg.APPLY_EVERY + k;
         mission_time = chunk_abs * cfg.CHUNK_DURATION;
+
+        if T_all(k) > 0
+            Ieq_chunk = Q_all(k) / T_all(k);
+        else
+            Ieq_chunk = cfg.IEQ_REF;
+        end
+        
+        if isfield(cfg, 'RUN') && cfg.RUN.enabled
+            chunkRow = struct();
+            chunkRow.timestamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
+            chunkRow.episode_idx = logged.episode_idx;
+            chunkRow.decision_idx = decision_idx;
+            chunkRow.chunk_in_decision = k;
+            chunkRow.global_chunk_idx = chunk_abs;
+        
+            chunkRow.dR1 = dR_frac(1);
+            chunkRow.dR2 = dR_frac(2);
+            chunkRow.dR3 = dR_frac(3);
+            chunkRow.gamma_v = gamma_v;
+            chunkRow.gamma_a = gamma_a;
+        
+            chunkRow.R1 = R_new(1);
+            chunkRow.R2 = R_new(2);
+            chunkRow.R3 = R_new(3);
+        
+            chunkRow.v_req = logged.v_req;
+            chunkRow.a_req = logged.a_req;
+            chunkRow.v_exec = v_exec;
+            chunkRow.a_exec = a_exec;
+        
+            chunkRow.soc_start_pct = battery_before_chunk.soc_pct;
+            chunkRow.soc_end_pct = battery.soc_pct;
+            chunkRow.Q_chunk_As = Q_all(k);
+            chunkRow.T_chunk_s = T_all(k);
+            chunkRow.Ieq_chunk_A = Ieq_chunk;
+        
+            chunkRow.feasible = simOut.feasible;
+            chunkRow.fail_reason = string(simOut.fail_reason);
+            chunkRow.fail_iter = simOut.fail_iter;
+            chunkRow.fail_time_s = simOut.fail_time_s;
+            chunkRow.fail_state_norm = simOut.fail_state_norm;
+            chunkRow.fail_input_norm = simOut.fail_input_norm;
+            chunkRow.fail_com_speed = simOut.fail_com_speed;
+            chunkRow.fail_fsm_leg1 = simOut.fail_fsm_leg1;
+            chunkRow.fail_h_rcond = simOut.fail_h_rcond;
+            chunkRow.fail_Aineq_rows = simOut.fail_Aineq_rows;
+            chunkRow.fail_Aineq_cols = simOut.fail_Aineq_cols;
+            chunkRow.fail_Aeq_rows = simOut.fail_Aeq_rows;
+            chunkRow.fail_Aeq_cols = simOut.fail_Aeq_cols;
+            chunkRow.qp_exitflag_last = simOut.qp_exitflag_last;
+        
+            chunkRow.state_norm_end = simOut.state_norm_end;
+            chunkRow.input_norm_end = simOut.input_norm_end;
+            chunkRow.com_speed_end = simOut.com_speed_end;
+            if isfield(simOut, 'fsm_leg1_end')
+                chunkRow.fsm_leg1_end = simOut.fsm_leg1_end;
+            else
+                chunkRow.fsm_leg1_end = NaN;
+            end
+        
+            chunkRow.tracking_error_total = simOut.tracking_error_total;
+            chunkRow.control_effort_total = simOut.control_effort_total;
+        
+            append_csv_row(cfg.RUN.chunk_csv, chunkRow);
+        end
 
         if T_all(k) > 0
             Ieq_chunk = Q_all(k) / T_all(k);
@@ -135,6 +201,54 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     logged.window = info;
     logged.episode_charge_total = logged.episode_charge_total + window_charge;
     logged.episode_time_total = logged.episode_time_total + window_time;
+
+    if isfield(cfg, 'RUN') && cfg.RUN.enabled
+        decisionRow = struct();
+        decisionRow.timestamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
+        decisionRow.episode_idx = logged.episode_idx;
+        decisionRow.decision_idx = decision_idx;
+        decisionRow.progress_frac = progress_next;
+    
+        decisionRow.dR1 = dR_frac(1);
+        decisionRow.dR2 = dR_frac(2);
+        decisionRow.dR3 = dR_frac(3);
+        decisionRow.gamma_v = gamma_v;
+        decisionRow.gamma_a = gamma_a;
+    
+        decisionRow.R1 = R_new(1);
+        decisionRow.R2 = R_new(2);
+        decisionRow.R3 = R_new(3);
+    
+        decisionRow.v_req = logged.v_req;
+        decisionRow.a_req = logged.a_req;
+        decisionRow.v_exec = v_exec;
+        decisionRow.a_exec = a_exec;
+    
+        decisionRow.soc_start_pct = soc_start;
+        decisionRow.soc_end_pct = soc_end;
+        decisionRow.dsoc_pct = dsoc;
+    
+        decisionRow.window_charge_As = window_charge;
+        decisionRow.window_time_s = window_time;
+        decisionRow.Ieq_window_A = Ieq_window;
+    
+        decisionRow.tracking_error_mean = window.tracking_error_mean;
+        decisionRow.control_effort_mean = window.control_effort_mean;
+    
+        decisionRow.nt = nt;
+        decisionRow.nu = nu;
+        decisionRow.reward = reward;
+        decisionRow.feasible = feasible;
+        decisionRow.terminal_reason = string(window.terminal_reason);
+        decisionRow.fail_reason = string(fail_reason);
+    
+        append_csv_row(cfg.RUN.decision_csv, decisionRow);
+    
+        if ~feasible
+            failureRow = decisionRow;
+            append_csv_row(cfg.RUN.failure_csv, failureRow);
+        end
+    end
 
     last_R = R_new;
     save(lastRPath, 'last_R');

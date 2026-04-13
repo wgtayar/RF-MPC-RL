@@ -165,6 +165,14 @@ function cfg = fill_transition_defaults(cfg, rootDir)
         cfg.autosave_every = 25;
     end
 
+    if ~isfield(cfg, 'flush_every_cases')
+        cfg.flush_every_cases = 400;
+    end
+    
+    if ~isfield(cfg, 'keep_edge_structs_in_final_mat')
+        cfg.keep_edge_structs_in_final_mat = false;
+    end
+
     if ~isfield(cfg, 'print_to_cli')
         cfg.print_to_cli = true;
     end
@@ -202,7 +210,7 @@ function cfg = fill_transition_defaults(cfg, rootDir)
     end
 
     if ~isfield(cfg, 'frontier_a_bounds')
-        cfg.frontier_a_bounds = [0.2 4.0];
+        cfg.frontier_a_bounds = [0.5 2.0];
     end
 
     if ~isfield(cfg, 'frontier_use_feasible_va_mask')
@@ -368,12 +376,22 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
     save(sourceMat, 'sourceResults');
 
     nEdges = nSeeds * nSeeds;
-    edgeResults(nEdges,1) = empty_transition_record();
-
     solverMat = zeros(nSeeds, nSeeds);
     usableMat = zeros(nSeeds, nSeeds);
 
+    edgeCsv = fullfile(runDir, ['transition_pairwise_edges_' runStamp '.csv']);
+    edgeMat = fullfile(runDir, ['transition_pairwise_edges_' runStamp '.mat']);
+    edgeBufferMat = fullfile(runDir, ['transition_pairwise_buffer_current_' runStamp '.mat']);
+    solverCsv = fullfile(runDir, ['transition_pairwise_solver_matrix_' runStamp '.csv']);
+    usableCsv = fullfile(runDir, ['transition_pairwise_usable_matrix_' runStamp '.csv']);
+    nodeCsv = fullfile(runDir, ['transition_pairwise_node_registry_' runStamp '.csv']);
+
+    edgeBuffer = empty_transition_record();
+    edgeBuffer = edgeBuffer([]);
+    edgeCsvInitialized = false;
+    nFlushed = 0;
     edgeIdx = 0;
+
     for i = 1:nSeeds
         src = sourceResults(i);
 
@@ -407,64 +425,75 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
                 rec.success_level = "I";
                 rec.transition_relation = "source_seed_failed_from_reset";
                 rec.fail_reason = "source_seed_failed";
-                edgeResults(edgeIdx) = rec;
-                continue
+            else
+                if cfg.print_case_start
+                    log_msg(fid, cfg, sprintf('PAIRWISE EDGE %d/%d | src=%d -> dst=%d', ...
+                        edgeIdx, nEdges, rec.source_node_id, rec.target_node_id));
+                end
+
+                dstRun = run_mpc_chunk(dstPoint, cfg, src.terminal_ctx);
+
+                rec.solver_feasible = dstRun.solver_feasible;
+                rec.usable_feasible = dstRun.usable_feasible;
+                rec.success_level = classify_success_level(dstRun.solver_feasible, dstRun.usable_feasible);
+                rec.transition_relation = classify_transition_relation(rec.target_static_solver, rec.solver_feasible);
+                rec.fail_reason = string(dstRun.fail_reason);
+                rec.fail_time_s = dstRun.fail_time_s;
+                rec.fail_iter = dstRun.fail_iter;
+                rec.quadprog_exitflag = dstRun.quadprog_exitflag;
+                rec.tracking_error_mean = dstRun.tracking_error_mean;
+                rec.control_effort_mean = dstRun.control_effort_mean;
+                rec.Ieq_A = dstRun.Ieq_A;
+                rec.soc_end_pct = dstRun.soc_end_pct;
+                rec.com_speed_end = dstRun.com_speed_end;
+                rec.fail_state_norm = dstRun.fail_state_norm;
+                rec.fail_input_norm = dstRun.fail_input_norm;
+                rec.fail_com_speed = dstRun.fail_com_speed;
+
+                solverMat(i,j) = double(rec.solver_feasible);
+                usableMat(i,j) = double(rec.usable_feasible);
+
+                if dstRun.solver_feasible
+                    nodeRegistry = update_node_registry(nodeRegistry, dstPoint, 1, rec.usable_feasible);
+                end
+
+                if ~dstRun.solver_feasible && cfg.print_failure_snapshot
+                    log_msg(fid, cfg, sprintf('PAIRWISE FAIL | src=%d -> dst=%d | reason=%s | fail_t=%.3f | exitflag=%g', ...
+                        rec.source_node_id, rec.target_node_id, dstRun.fail_reason, dstRun.fail_time_s, dstRun.quadprog_exitflag));
+                end
             end
 
-            if cfg.print_case_start
-                log_msg(fid, cfg, sprintf('PAIRWISE EDGE %d/%d | src=%d -> dst=%d', ...
-                    edgeIdx, nEdges, rec.source_node_id, rec.target_node_id));
-            end
+            edgeBuffer(end+1,1) = rec; %#ok<AGROW>
 
-            dstRun = run_mpc_chunk(dstPoint, cfg, src.terminal_ctx);
+            if numel(edgeBuffer) >= cfg.flush_every_cases || edgeIdx == nEdges
+                save(edgeBufferMat, 'edgeBuffer', 'nodeRegistry', 'solverMat', 'usableMat');
 
-            rec.solver_feasible = dstRun.solver_feasible;
-            rec.usable_feasible = dstRun.usable_feasible;
-            rec.success_level = classify_success_level(dstRun.solver_feasible, dstRun.usable_feasible);
-            rec.transition_relation = classify_transition_relation(rec.target_static_solver, rec.solver_feasible);
-            rec.fail_reason = string(dstRun.fail_reason);
-            rec.fail_time_s = dstRun.fail_time_s;
-            rec.fail_iter = dstRun.fail_iter;
-            rec.quadprog_exitflag = dstRun.quadprog_exitflag;
-            rec.tracking_error_mean = dstRun.tracking_error_mean;
-            rec.control_effort_mean = dstRun.control_effort_mean;
-            rec.Ieq_A = dstRun.Ieq_A;
-            rec.soc_end_pct = dstRun.soc_end_pct;
-            rec.com_speed_end = dstRun.com_speed_end;
-            rec.fail_state_norm = dstRun.fail_state_norm;
-            rec.fail_input_norm = dstRun.fail_input_norm;
-            rec.fail_com_speed = dstRun.fail_com_speed;
+                flushTable = transition_records_to_table(edgeBuffer);
+                if ~edgeCsvInitialized
+                    writetable(flushTable, edgeCsv);
+                    edgeCsvInitialized = true;
+                else
+                    writetable(flushTable, edgeCsv, 'WriteMode', 'append');
+                end
 
-            solverMat(i,j) = double(rec.solver_feasible);
-            usableMat(i,j) = double(rec.usable_feasible);
+                nFlushed = nFlushed + numel(edgeBuffer);
+                log_msg(fid, cfg, sprintf('PAIRWISE FLUSH | wrote %d rows | total written=%d', ...
+                    numel(edgeBuffer), nFlushed));
 
-            if dstRun.solver_feasible
-                nodeRegistry = update_node_registry(nodeRegistry, dstPoint, 1, rec.usable_feasible);
-            end
-
-            edgeResults(edgeIdx) = rec;
-
-            if ~dstRun.solver_feasible && cfg.print_failure_snapshot
-                log_msg(fid, cfg, sprintf('PAIRWISE FAIL | src=%d -> dst=%d | reason=%s | fail_t=%.3f | exitflag=%g', ...
-                    rec.source_node_id, rec.target_node_id, dstRun.fail_reason, dstRun.fail_time_s, dstRun.quadprog_exitflag));
-            end
-
-            if mod(edgeIdx, cfg.autosave_every) == 0 || edgeIdx == nEdges
-                save(fullfile(runDir, ['transition_pairwise_edges_partial_' runStamp '.mat']), 'edgeResults', 'solverMat', 'usableMat', 'nodeRegistry');
+                edgeBuffer = empty_transition_record();
+                edgeBuffer = edgeBuffer([]);
+                save(edgeBufferMat, 'edgeBuffer');
             end
         end
     end
 
-    edgeCsv = fullfile(runDir, ['transition_pairwise_edges_' runStamp '.csv']);
-    edgeMat = fullfile(runDir, ['transition_pairwise_edges_' runStamp '.mat']);
-    solverCsv = fullfile(runDir, ['transition_pairwise_solver_matrix_' runStamp '.csv']);
-    usableCsv = fullfile(runDir, ['transition_pairwise_usable_matrix_' runStamp '.csv']);
-    nodeCsv = fullfile(runDir, ['transition_pairwise_node_registry_' runStamp '.csv']);
+    if edgeCsvInitialized
+        edgeTable = readtable(edgeCsv);
+    else
+        edgeTable = table();
+    end
 
-    edgeTable = transition_records_to_table(edgeResults);
-    writetable(edgeTable, edgeCsv);
-    save(edgeMat, 'edgeResults', 'solverMat', 'usableMat', 'nodeRegistry');
-
+    save(edgeMat, 'solverMat', 'usableMat', 'nodeRegistry', 'sourceResults', '-v7.3');
     writematrix(solverMat, solverCsv);
     writematrix(usableMat, usableCsv);
     writetable(node_registry_to_table(nodeRegistry), nodeCsv);
@@ -477,8 +506,8 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
     summary.edge_table = edgeTable;
     summary.solver_matrix = solverMat;
     summary.usable_matrix = usableMat;
-    summary.n_solver_feasible_edges = sum(edgeTable.solver_feasible);
-    summary.n_usable_feasible_edges = sum(edgeTable.usable_feasible);
+    summary.n_solver_feasible_edges = iff_tblsum(edgeTable, 'solver_feasible');
+    summary.n_usable_feasible_edges = iff_tblsum(edgeTable, 'usable_feasible');
 
     log_msg(fid, cfg, sprintf('PAIRWISE SUMMARY | solver-feasible edges = %d | usable-feasible edges = %d', ...
         summary.n_solver_feasible_edges, summary.n_usable_feasible_edges));
@@ -488,16 +517,13 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
     out.summary = summary;
 end
 
+
 function out = run_frontier_stage(nodeRegistry, staticTable, pairwiseSourceResults, cfg, fid, runDir, runStamp)
     if isempty(pairwiseSourceResults)
         log_msg(fid, cfg, 'FRONTIER STAGE SKIPPED | pairwiseSourceResults is empty.');
         out = struct();
         out.nodeRegistry = nodeRegistry;
-        out.summary = struct( ...
-            'edge_table', table(), ...
-            'n_edges', 0, ...
-            'n_solver_feasible_edges', 0, ...
-            'n_usable_feasible_edges', 0);
+        out.summary = struct('edge_table', table(), 'n_edges', 0, 'n_solver_feasible_edges', 0, 'n_usable_feasible_edges', 0);
         return
     end
 
@@ -508,11 +534,7 @@ function out = run_frontier_stage(nodeRegistry, staticTable, pairwiseSourceResul
         log_msg(fid, cfg, 'FRONTIER STAGE SKIPPED | no pairwise source rollouts were feasible.');
         out = struct();
         out.nodeRegistry = nodeRegistry;
-        out.summary = struct( ...
-            'edge_table', table(), ...
-            'n_edges', 0, ...
-            'n_solver_feasible_edges', 0, ...
-            'n_usable_feasible_edges', 0);
+        out.summary = struct('edge_table', table(), 'n_edges', 0, 'n_solver_feasible_edges', 0, 'n_usable_feasible_edges', 0);
         return
     end
 
@@ -531,11 +553,18 @@ function out = run_frontier_stage(nodeRegistry, staticTable, pairwiseSourceResul
     log_msg(fid, cfg, sprintf('FRONTIER SUMMARY START | feasible sources = %d | global candidates = %d', ...
         numel(sourceNodes), numel(allCandidates)));
 
-    edgeResults = empty_transition_record();
-    edgeResults = edgeResults([]);
+    edgeCsv = fullfile(runDir, ['transition_frontier_edges_' runStamp '.csv']);
+    edgeMat = fullfile(runDir, ['transition_frontier_edges_' runStamp '.mat']);
+    edgeBufferMat = fullfile(runDir, ['transition_frontier_buffer_current_' runStamp '.mat']);
+    nodeCsv = fullfile(runDir, ['transition_frontier_node_registry_' runStamp '.csv']);
+
+    edgeBuffer = empty_transition_record();
+    edgeBuffer = edgeBuffer([]);
+    edgeCsvInitialized = false;
+    testedEdges = 0;
+    nFlushed = 0;
 
     newNodeRegistry = nodeRegistry;
-    testedEdges = 0;
 
     for i = 1:numel(sourceNodes)
         srcPoint = node_to_point(sourceNodes(i));
@@ -605,46 +634,66 @@ function out = run_frontier_stage(nodeRegistry, staticTable, pairwiseSourceResul
                 rec.target_node_id = find_node_id(newNodeRegistry, dstPoint.node_key);
             end
 
-            edgeResults(end+1,1) = rec; %#ok<AGROW>
+            edgeBuffer(end+1,1) = rec; %#ok<AGROW>
 
             if ~dstRun.solver_feasible && cfg.print_failure_snapshot
                 log_msg(fid, cfg, sprintf('FRONTIER FAIL | src=%d -> target=%s | reason=%s | fail_t=%.3f | exitflag=%g', ...
                     rec.source_node_id, char(rec.target_key), dstRun.fail_reason, dstRun.fail_time_s, dstRun.quadprog_exitflag));
             end
 
-            if mod(testedEdges, cfg.autosave_every) == 0
-                save(fullfile(runDir, ['transition_frontier_partial_' runStamp '.mat']), 'edgeResults', 'newNodeRegistry');
+            if numel(edgeBuffer) >= cfg.flush_every_cases
+                save(edgeBufferMat, 'edgeBuffer', 'newNodeRegistry');
+
+                flushTable = transition_records_to_table(edgeBuffer);
+                if ~edgeCsvInitialized
+                    writetable(flushTable, edgeCsv);
+                    edgeCsvInitialized = true;
+                else
+                    writetable(flushTable, edgeCsv, 'WriteMode', 'append');
+                end
+
+                nFlushed = nFlushed + numel(edgeBuffer);
+                log_msg(fid, cfg, sprintf('FRONTIER FLUSH | wrote %d rows | total written=%d', ...
+                    numel(edgeBuffer), nFlushed));
+
+                edgeBuffer = empty_transition_record();
+                edgeBuffer = edgeBuffer([]);
+                save(edgeBufferMat, 'edgeBuffer');
             end
         end
     end
 
-    if isempty(edgeResults)
-        log_msg(fid, cfg, 'FRONTIER SUMMARY END | no frontier edges were executed.');
-        out = struct();
-        out.nodeRegistry = newNodeRegistry;
-        out.summary = struct( ...
-            'edge_table', table(), ...
-            'n_edges', 0, ...
-            'n_solver_feasible_edges', 0, ...
-            'n_usable_feasible_edges', 0);
-        return
+    if ~isempty(edgeBuffer)
+        save(edgeBufferMat, 'edgeBuffer', 'newNodeRegistry');
+        flushTable = transition_records_to_table(edgeBuffer);
+        if ~edgeCsvInitialized
+            writetable(flushTable, edgeCsv);
+            edgeCsvInitialized = true;
+        else
+            writetable(flushTable, edgeCsv, 'WriteMode', 'append');
+        end
+        nFlushed = nFlushed + numel(edgeBuffer);
+        log_msg(fid, cfg, sprintf('FRONTIER FLUSH | wrote %d rows | total written=%d', ...
+            numel(edgeBuffer), nFlushed));
+        edgeBuffer = empty_transition_record();
+        edgeBuffer = edgeBuffer([]);
+        save(edgeBufferMat, 'edgeBuffer');
     end
 
-    edgeTable = transition_records_to_table(edgeResults);
+    if edgeCsvInitialized
+        edgeTable = readtable(edgeCsv);
+    else
+        edgeTable = table();
+    end
 
-    edgeCsv = fullfile(runDir, ['transition_frontier_edges_' runStamp '.csv']);
-    edgeMat = fullfile(runDir, ['transition_frontier_edges_' runStamp '.mat']);
-    nodeCsv = fullfile(runDir, ['transition_frontier_node_registry_' runStamp '.csv']);
-
-    writetable(edgeTable, edgeCsv);
-    save(edgeMat, 'edgeResults', 'newNodeRegistry');
+    save(edgeMat, 'newNodeRegistry', '-v7.3');
     writetable(node_registry_to_table(newNodeRegistry), nodeCsv);
 
     summary = struct();
     summary.edge_table = edgeTable;
     summary.n_edges = height(edgeTable);
-    summary.n_solver_feasible_edges = sum(edgeTable.solver_feasible);
-    summary.n_usable_feasible_edges = sum(edgeTable.usable_feasible);
+    summary.n_solver_feasible_edges = iff_tblsum(edgeTable, 'solver_feasible');
+    summary.n_usable_feasible_edges = iff_tblsum(edgeTable, 'usable_feasible');
 
     log_msg(fid, cfg, sprintf('FRONTIER SUMMARY END | tested edges = %d | solver-feasible = %d | usable-feasible = %d', ...
         summary.n_edges, summary.n_solver_feasible_edges, summary.n_usable_feasible_edges));
@@ -656,8 +705,16 @@ end
 
 function out = run_adaptive_stage(nodeRegistry, staticTable, cfg, fid, runDir, runStamp)
     newNodeRegistry = nodeRegistry;
-    allEdgeResults = empty_transition_record();
-    allEdgeResults = allEdgeResults([]);
+
+    allEdgeCsv = fullfile(runDir, ['transition_adaptive_all_edges_' runStamp '.csv']);
+    allEdgeMat = fullfile(runDir, ['transition_adaptive_all_edges_' runStamp '.mat']);
+    edgeBufferMat = fullfile(runDir, ['transition_adaptive_buffer_current_' runStamp '.mat']);
+    nodeCsv = fullfile(runDir, ['transition_adaptive_node_registry_' runStamp '.csv']);
+
+    edgeBuffer = empty_transition_record();
+    edgeBuffer = edgeBuffer([]);
+    edgeCsvInitialized = false;
+    nFlushed = 0;
 
     currentDepth = 1;
     frontierKeys = get_frontier_keys(newNodeRegistry, currentDepth);
@@ -666,11 +723,7 @@ function out = run_adaptive_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
         log_msg(fid, cfg, 'ADAPTIVE STAGE SKIPPED | no depth-1 frontier nodes are available.');
         out = struct();
         out.nodeRegistry = newNodeRegistry;
-        out.summary = struct( ...
-            'edge_table', table(), ...
-            'n_edges', 0, ...
-            'n_solver_feasible_edges', 0, ...
-            'n_usable_feasible_edges', 0);
+        out.summary = struct('edge_table', table(), 'n_edges', 0, 'n_solver_feasible_edges', 0, 'n_usable_feasible_edges', 0);
         return
     end
 
@@ -680,10 +733,8 @@ function out = run_adaptive_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
         srcMask = arrayfun(@(n) any(strcmp(string(n.node_key), frontierKeys)), newNodeRegistry);
         sourceNodes = newNodeRegistry(srcMask);
 
-        edgeResults = empty_transition_record();
-        edgeResults = edgeResults([]);
-
         newKeysThisDepth = strings(0,1);
+        depthEdgesThisRound = 0;
 
         for i = 1:numel(sourceNodes)
             srcPoint = node_to_point(sourceNodes(i));
@@ -701,6 +752,7 @@ function out = run_adaptive_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
             end
 
             for j = 1:numel(candidates)
+                depthEdgesThisRound = depthEdgesThisRound + 1;
                 dstPoint = candidates(j);
 
                 rec = empty_transition_record();
@@ -748,61 +800,65 @@ function out = run_adaptive_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
                     newKeysThisDepth(end+1,1) = string(dstPoint.node_key); %#ok<AGROW>
                 end
 
-                edgeResults(end+1,1) = rec; %#ok<AGROW>
+                edgeBuffer(end+1,1) = rec; %#ok<AGROW>
+
+                if numel(edgeBuffer) >= cfg.flush_every_cases
+                    save(edgeBufferMat, 'edgeBuffer', 'newNodeRegistry');
+                    flushTable = transition_records_to_table(edgeBuffer);
+                    if ~edgeCsvInitialized
+                        writetable(flushTable, allEdgeCsv);
+                        edgeCsvInitialized = true;
+                    else
+                        writetable(flushTable, allEdgeCsv, 'WriteMode', 'append');
+                    end
+                    nFlushed = nFlushed + numel(edgeBuffer);
+                    log_msg(fid, cfg, sprintf('ADAPTIVE FLUSH | wrote %d rows | total written=%d', ...
+                        numel(edgeBuffer), nFlushed));
+                    edgeBuffer = empty_transition_record();
+                    edgeBuffer = edgeBuffer([]);
+                    save(edgeBufferMat, 'edgeBuffer');
+                end
             end
         end
 
-        if isempty(edgeResults)
-            log_msg(fid, cfg, sprintf('ADAPTIVE DEPTH %d END | no edges executed.', currentDepth + 1));
-            break
-        end
-
-        levelCsv = fullfile(runDir, sprintf('transition_adaptive_depth_%02d_%s.csv', currentDepth + 1, runStamp));
-        levelMat = fullfile(runDir, sprintf('transition_adaptive_depth_%02d_%s.mat', currentDepth + 1, runStamp));
-
-        edgeTable = transition_records_to_table(edgeResults);
-        writetable(edgeTable, levelCsv);
-        save(levelMat, 'edgeResults', 'newNodeRegistry');
-
-        if isempty(allEdgeResults)
-            allEdgeResults = edgeResults;
-        else
-            allEdgeResults = [allEdgeResults; edgeResults]; %#ok<AGROW>
-        end
-
         log_msg(fid, cfg, sprintf('ADAPTIVE DEPTH %d END | tested edges = %d | new solver-reachable keys = %d', ...
-            currentDepth + 1, height(edgeTable), numel(unique(newKeysThisDepth))));
+            currentDepth + 1, depthEdgesThisRound, numel(unique(newKeysThisDepth))));
 
         frontierKeys = unique(newKeysThisDepth);
         currentDepth = currentDepth + 1;
     end
 
-    if isempty(allEdgeResults)
-        log_msg(fid, cfg, 'ADAPTIVE STAGE END | no adaptive edges were generated.');
-        out = struct();
-        out.nodeRegistry = newNodeRegistry;
-        out.summary = struct( ...
-            'edge_table', table(), ...
-            'n_edges', 0, ...
-            'n_solver_feasible_edges', 0, ...
-            'n_usable_feasible_edges', 0);
-        return
+    if ~isempty(edgeBuffer)
+        save(edgeBufferMat, 'edgeBuffer', 'newNodeRegistry');
+        flushTable = transition_records_to_table(edgeBuffer);
+        if ~edgeCsvInitialized
+            writetable(flushTable, allEdgeCsv);
+            edgeCsvInitialized = true;
+        else
+            writetable(flushTable, allEdgeCsv, 'WriteMode', 'append');
+        end
+        nFlushed = nFlushed + numel(edgeBuffer);
+        log_msg(fid, cfg, sprintf('ADAPTIVE FLUSH | wrote %d rows | total written=%d', ...
+            numel(edgeBuffer), nFlushed));
+        edgeBuffer = empty_transition_record();
+        edgeBuffer = edgeBuffer([]);
+        save(edgeBufferMat, 'edgeBuffer');
     end
 
-    allEdgeCsv = fullfile(runDir, ['transition_adaptive_all_edges_' runStamp '.csv']);
-    allEdgeMat = fullfile(runDir, ['transition_adaptive_all_edges_' runStamp '.mat']);
-    nodeCsv = fullfile(runDir, ['transition_adaptive_node_registry_' runStamp '.csv']);
+    if edgeCsvInitialized
+        allEdgeTable = readtable(allEdgeCsv);
+    else
+        allEdgeTable = table();
+    end
 
-    allEdgeTable = transition_records_to_table(allEdgeResults);
-    writetable(allEdgeTable, allEdgeCsv);
-    save(allEdgeMat, 'allEdgeResults', 'newNodeRegistry');
+    save(allEdgeMat, 'newNodeRegistry', '-v7.3');
     writetable(node_registry_to_table(newNodeRegistry), nodeCsv);
 
     summary = struct();
     summary.edge_table = allEdgeTable;
     summary.n_edges = height(allEdgeTable);
-    summary.n_solver_feasible_edges = sum(allEdgeTable.solver_feasible);
-    summary.n_usable_feasible_edges = sum(allEdgeTable.usable_feasible);
+    summary.n_solver_feasible_edges = iff_tblsum(allEdgeTable, 'solver_feasible');
+    summary.n_usable_feasible_edges = iff_tblsum(allEdgeTable, 'usable_feasible');
 
     out = struct();
     out.nodeRegistry = newNodeRegistry;
@@ -824,6 +880,8 @@ function run = run_mpc_chunk(point, cfg, initCtx)
     qp_options = optimoptions('quadprog', 'Display', 'off');
 
     if isempty(initCtx)
+        reset_mpc_case_state();
+    
         if gait == 1
             [p, Xt, Ut] = fcn_bound_ref_traj(p);
         else
@@ -1935,5 +1993,13 @@ function y = string_scalar(x)
         y = string(x);
     else
         y = "";
+    end
+end
+
+function n = iff_tblsum(T, varName)
+    if isempty(T) || ~ismember(varName, T.Properties.VariableNames)
+        n = 0;
+    else
+        n = sum(T.(varName));
     end
 end

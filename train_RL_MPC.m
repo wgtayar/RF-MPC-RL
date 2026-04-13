@@ -31,7 +31,10 @@ function train_RL_MPC()
     cfg.RUN.run_dir = runDir;
     cfg.RUN.run_stamp = runStamp;
     cfg.RUN.log_file = logFile;
-    cfg.RUN.checkpoint_file = '';
+    cfg.RUN.checkpoint_file = fullfile(runDir, ['rl_checkpoints_' runStamp '.mat']);
+    cfg.RUN.chunk_csv = fullfile(runDir, ['rl_chunks_' runStamp '.csv']);
+    cfg.RUN.decision_csv = fullfile(runDir, ['rl_decisions_' runStamp '.csv']);
+    cfg.RUN.failure_csv = fullfile(runDir, ['rl_failures_' runStamp '.csv']);
     cfg.RUN.saved_agents_dir = savedAgentsDir;
 
     save(cfgPath, 'cfg', '-append');
@@ -51,7 +54,7 @@ function train_RL_MPC()
     fprintf('[SAVED AGENTS DIR] %s\n', savedAgentsDir);
 
     trainOpts = rlTrainingOptions( ...
-        'MaxEpisodes', 600, ...
+        'MaxEpisodes', 10, ...
         'MaxStepsPerEpisode', cfg.EP_STEPS, ...
         'ScoreAveragingWindowLength', 20, ...
         'Verbose', true, ...

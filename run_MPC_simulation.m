@@ -83,16 +83,35 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
 
     tracking_error = zeros(max_iter, 1);
     control_effort = zeros(max_iter, 1);
+    state_norm = nan(max_iter, 1);
+    input_norm = nan(max_iter, 1);
+    com_speed = nan(max_iter, 1);
+    qp_exitflag = nan(max_iter, 1);
+    fsm_leg1 = nan(max_iter, 1);
+    iter_time = nan(max_iter, 1);
     knee_t = nan(max_iter, 1);
     knee_tau4 = nan(max_iter, 1);
     knee_I4 = nan(max_iter, 1);
-
+    
     feasible = true;
+    fail_iter = NaN;
+    fail_time_s = NaN;
+    fail_state_norm = NaN;
+    fail_input_norm = NaN;
+    fail_com_speed = NaN;
+    fail_fsm_leg1 = NaN;
+    fail_h_rcond = NaN;
+    fail_Aineq_rows = NaN;
+    fail_Aineq_cols = NaN;
+    fail_Aeq_rows = NaN;
+    fail_Aeq_cols = NaN;
 
     try
         for ii = 1:max_iter
             t0_abs = Sim.t + dt_sim * (ii - 1);
             t_hor = t0_abs + p.Tmpc * (0:p.predHorizon-1);
+
+            iter_time(ii) = t0_abs;
 
             if gait == 1
                 [FSM, Xd, Ud, Xt] = fcn_FSM_bound(t_hor, Xt, p);
@@ -100,18 +119,34 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
                 [FSM, Xd, Ud, Xt] = fcn_FSM(t_hor, Xt, p);
             end
 
+            fsm_leg1(ii) = FSM(1);
+
             [Sim.kneeProxyState, kneeOut] = knee_proxy_step(t0_abs, FSM(1), Sim.kneeProxyState, kneeTpl, kneeParams);
             knee_t(ii) = kneeOut.t;
             knee_tau4(ii) = kneeOut.tau4;
             knee_I4(ii) = kneeOut.I4;
 
             [H, g, Aineq, bineq, Aeq, beq] = fcn_get_QP_form_eta(Xt, Ut, Xd, Ud, p);
-            H = (H + H') / 2;
+            
+            fail_h_rcond = rcond(H);
+            fail_Aineq_rows = size(Aineq,1);
+            fail_Aineq_cols = size(Aineq,2);
+            fail_Aeq_rows = size(Aeq,1);
+            fail_Aeq_cols = size(Aeq,2);
 
             [zval, ~, exitflag] = quadprog(H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
+
+            qp_exitflag(ii) = exitflag;
+
             if exitflag <= 0 || isempty(zval)
                 feasible = false;
                 fail_reason = 'quadprog';
+                fail_iter = ii;
+                fail_time_s = t0_abs;
+                fail_state_norm = norm(Xt);
+                fail_input_norm = norm(Ut);
+                fail_com_speed = norm(Xt(4:5));
+                fail_fsm_leg1 = FSM(1);
                 break
             end
 
@@ -132,6 +167,10 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
 
             tracking_error(ii) = sum((Xt - Xd(:,1)).^2);
             control_effort(ii) = sum(Ut.^2);
+
+            state_norm(ii) = norm(Xt);
+            input_norm(ii) = norm(Ut);
+            com_speed(ii) = norm(Xt(4:5));
         end
     catch ME
         feasible = false;
@@ -152,6 +191,25 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
         out.battery = Sim.battery;
         out.feasible = false;
         out.fail_reason = fail_reason;
+    
+        out.fail_iter = fail_iter;
+        out.fail_time_s = fail_time_s;
+        out.fail_state_norm = fail_state_norm;
+        out.fail_input_norm = fail_input_norm;
+        out.fail_com_speed = fail_com_speed;
+        out.fail_fsm_leg1 = fail_fsm_leg1;
+        out.fail_h_rcond = fail_h_rcond;
+        out.fail_Aineq_rows = fail_Aineq_rows;
+        out.fail_Aineq_cols = fail_Aineq_cols;
+        out.fail_Aeq_rows = fail_Aeq_rows;
+        out.fail_Aeq_cols = fail_Aeq_cols;
+        out.qp_exitflag_last = qp_exitflag(max(find(isfinite(qp_exitflag),1,'last'),1));
+    
+        out.state_norm_end = norm(Xt);
+        out.input_norm_end = norm(Ut);
+        out.com_speed_end = norm(Xt(4:5));
+        out.fsm_leg1_end = NaN;
+    
         return
     end
 
@@ -202,4 +260,22 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
     out.battery = battery;
     out.feasible = true;
     out.fail_reason = '';
+
+    out.fail_iter = NaN;
+    out.fail_time_s = NaN;
+    out.fail_state_norm = NaN;
+    out.fail_input_norm = NaN;
+    out.fail_com_speed = NaN;
+    out.fail_fsm_leg1 = NaN;
+    out.fail_h_rcond = NaN;
+    out.fail_Aineq_rows = NaN;
+    out.fail_Aineq_cols = NaN;
+    out.fail_Aeq_rows = NaN;
+    out.fail_Aeq_cols = NaN;
+    out.qp_exitflag_last = qp_exitflag(max(find(isfinite(qp_exitflag),1,'last'),1));
+    
+    out.state_norm_end = norm(Xt);
+    out.input_norm_end = norm(Ut);
+    out.com_speed_end = norm(Xt(4:5));
+    out.fsm_leg1_end = fsm_leg1(max(find(isfinite(fsm_leg1),1,'last'),1));
 end
