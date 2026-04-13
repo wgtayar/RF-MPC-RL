@@ -141,7 +141,7 @@ function sweepCfg = fill_static_sweep_defaults(sweepCfg, rootDir)
     end
 
     if ~isfield(sweepCfg, 'v_vals')
-        sweepCfg.v_vals = 0.9:0.1:1.5;
+        sweepCfg.v_vals = 0.3:0.1:1.5;
     end
 
     if ~isfield(sweepCfg, 'a_vals')

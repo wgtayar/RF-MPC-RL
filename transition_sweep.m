@@ -62,17 +62,20 @@ function Results = transition_sweep(cfg)
     Results.static_source = staticInfo.source_file;
     Results.seed_table = seedTable;
 
+    pairwiseSourceResults = struct([]);
+    
     if cfg.run_pairwise
         log_msg(fid, cfg, 'PAIRWISE STAGE START');
         pairwiseOut = run_pairwise_stage(seedTable, staticInfo.caseTable, nodeRegistry, cfg, fid, runDir, runStamp);
         nodeRegistry = pairwiseOut.nodeRegistry;
         Results.pairwise = pairwiseOut.summary;
+        pairwiseSourceResults = pairwiseOut.summary.source_results;
         log_msg(fid, cfg, 'PAIRWISE STAGE END');
     end
-
+    
     if cfg.run_frontier
         log_msg(fid, cfg, 'FRONTIER STAGE START');
-        frontierOut = run_frontier_stage(nodeRegistry, staticInfo.caseTable, cfg, fid, runDir, runStamp);
+        frontierOut = run_frontier_stage(nodeRegistry, staticInfo.caseTable, pairwiseSourceResults, cfg, fid, runDir, runStamp);
         nodeRegistry = frontierOut.nodeRegistry;
         Results.frontier = frontierOut.summary;
         log_msg(fid, cfg, 'FRONTIER STAGE END');
@@ -312,21 +315,25 @@ function nodeRegistry = init_node_registry(seedTable)
 
     for i = 1:n
         nodeRegistry(i).node_id = seedTable.node_id(i);
-        nodeRegistry(i).node_key = seedTable.node_key(i);
+        nodeRegistry(i).node_key = char(seedTable.node_key(i));
         nodeRegistry(i).rhoR = seedTable.rhoR(i);
         nodeRegistry(i).v_cmd = seedTable.v_cmd(i);
         nodeRegistry(i).a_cmd = seedTable.a_cmd(i);
+
         nodeRegistry(i).is_static_seed = true;
         nodeRegistry(i).static_solver_feasible = true;
-        nodeRegistry(i).static_usable = seedTable.static_usable(i);
+        nodeRegistry(i).static_usable = logical(seedTable.static_usable(i));
+
+        nodeRegistry(i).ever_solver_feasible = true;
+        nodeRegistry(i).ever_usable_feasible = logical(seedTable.static_usable(i));
+
         nodeRegistry(i).min_depth = 0;
         nodeRegistry(i).node_class = 'S';
+
         if seedTable.static_usable(i)
             nodeRegistry(i).quality_class = 'P';
-            nodeRegistry(i).ever_usable_feasible = true;
         else
             nodeRegistry(i).quality_class = 'Q';
-            nodeRegistry(i).ever_solver_feasible = true;
         end
     end
 end
@@ -337,7 +344,6 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
     log_msg(fid, cfg, sprintf('Pairwise stage seeds = %d', nSeeds));
 
     sourceResults(nSeeds,1) = empty_source_rollout();
-    sourceCases(nSeeds,1) = empty_transition_record();
 
     for i = 1:nSeeds
         srcPoint = row_to_point(seedTable(i,:));
@@ -349,24 +355,6 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
 
         srcRun = run_mpc_chunk(srcPoint, cfg, []);
         sourceResults(i) = source_rollout_from_chunk(seedTable(i,:), srcRun);
-
-        sourceCases(i).stage = "pairwise_source";
-        sourceCases(i).source_node_id = seedTable.node_id(i);
-        sourceCases(i).source_key = seedTable.node_key(i);
-        sourceCases(i).target_node_id = seedTable.node_id(i);
-        sourceCases(i).target_key = seedTable.node_key(i);
-        sourceCases(i).solver_feasible = srcRun.solver_feasible;
-        sourceCases(i).usable_feasible = srcRun.usable_feasible;
-        sourceCases(i).success_level = classify_success_level(srcRun.solver_feasible, srcRun.usable_feasible);
-        sourceCases(i).transition_relation = "source_reset_rollout";
-        sourceCases(i).fail_reason = string(srcRun.fail_reason);
-        sourceCases(i).fail_time_s = srcRun.fail_time_s;
-        sourceCases(i).fail_iter = srcRun.fail_iter;
-        sourceCases(i).quadprog_exitflag = srcRun.quadprog_exitflag;
-        sourceCases(i).tracking_error_mean = srcRun.tracking_error_mean;
-        sourceCases(i).control_effort_mean = srcRun.control_effort_mean;
-        sourceCases(i).Ieq_A = srcRun.Ieq_A;
-        sourceCases(i).soc_end_pct = srcRun.soc_end_pct;
 
         if ~srcRun.solver_feasible
             log_msg(fid, cfg, sprintf('PAIRWISE SOURCE FAIL | node=%d | reason=%s | fail_t=%.3f', ...
@@ -484,6 +472,7 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
     summary = struct();
     summary.n_seeds = nSeeds;
     summary.n_edges = nEdges;
+    summary.source_results = sourceResults;
     summary.source_table = source_rollout_to_table(sourceResults);
     summary.edge_table = edgeTable;
     summary.solver_matrix = solverMat;
@@ -499,33 +488,79 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
     out.summary = summary;
 end
 
-function out = run_frontier_stage(nodeRegistry, staticTable, cfg, fid, runDir, runStamp)
-    sourceIdx = find(arrayfun(@(n) ~strcmp(n.quality_class, 'I'), nodeRegistry));
-    sourceNodes = nodeRegistry(sourceIdx);
+function out = run_frontier_stage(nodeRegistry, staticTable, pairwiseSourceResults, cfg, fid, runDir, runStamp)
+    if isempty(pairwiseSourceResults)
+        log_msg(fid, cfg, 'FRONTIER STAGE SKIPPED | pairwiseSourceResults is empty.');
+        out = struct();
+        out.nodeRegistry = nodeRegistry;
+        out.summary = struct( ...
+            'edge_table', table(), ...
+            'n_edges', 0, ...
+            'n_solver_feasible_edges', 0, ...
+            'n_usable_feasible_edges', 0);
+        return
+    end
 
-    candidates = build_candidate_targets(sourceNodes, cfg);
-    candidates = remove_existing_nodes(candidates, nodeRegistry);
+    feasibleMask = arrayfun(@(s) s.source_solver_feasible, pairwiseSourceResults);
+    sourceResults = pairwiseSourceResults(feasibleMask);
 
-    log_msg(fid, cfg, sprintf('FRONTIER SUMMARY START | sources = %d | candidates = %d', numel(sourceNodes), numel(candidates)));
+    if isempty(sourceResults)
+        log_msg(fid, cfg, 'FRONTIER STAGE SKIPPED | no pairwise source rollouts were feasible.');
+        out = struct();
+        out.nodeRegistry = nodeRegistry;
+        out.summary = struct( ...
+            'edge_table', table(), ...
+            'n_edges', 0, ...
+            'n_solver_feasible_edges', 0, ...
+            'n_usable_feasible_edges', 0);
+        return
+    end
 
-    nEdges = numel(sourceNodes) * numel(candidates);
-    edgeResults(nEdges,1) = empty_transition_record();
-    edgeIdx = 0;
+    sourceNodes = repmat(struct('node_id', NaN, 'node_key', '', 'rhoR', NaN, 'v_cmd', NaN, 'a_cmd', NaN), numel(sourceResults), 1);
+    for i = 1:numel(sourceResults)
+        sourceNodes(i).node_id = sourceResults(i).source_node_id;
+        sourceNodes(i).node_key = char(sourceResults(i).source_key);
+        sourceNodes(i).rhoR = sourceResults(i).source_rhoR;
+        sourceNodes(i).v_cmd = sourceResults(i).source_v;
+        sourceNodes(i).a_cmd = sourceResults(i).source_a;
+    end
+
+    allCandidates = build_candidate_targets(sourceNodes, cfg);
+    allCandidates = remove_existing_nodes(allCandidates, nodeRegistry);
+
+    log_msg(fid, cfg, sprintf('FRONTIER SUMMARY START | feasible sources = %d | global candidates = %d', ...
+        numel(sourceNodes), numel(allCandidates)));
+
+    edgeResults = empty_transition_record();
+    edgeResults = edgeResults([]);
 
     newNodeRegistry = nodeRegistry;
+    testedEdges = 0;
 
     for i = 1:numel(sourceNodes)
         srcPoint = node_to_point(sourceNodes(i));
-        srcRun = run_mpc_chunk(srcPoint, cfg, []);
+        src = sourceResults(i);
 
-        if ~srcRun.solver_feasible
+        if isempty(src.terminal_ctx) || ~isstruct(src.terminal_ctx)
+            log_msg(fid, cfg, sprintf('FRONTIER SOURCE SKIP | node=%d | missing terminal context.', sourceNodes(i).node_id));
             continue
         end
 
-        for j = 1:numel(candidates)
-            edgeIdx = edgeIdx + 1;
+        localCandidates = build_candidate_targets(sourceNodes(i), cfg);
+        localCandidates = remove_existing_nodes(localCandidates, newNodeRegistry);
 
-            dstPoint = candidates(j);
+        log_msg(fid, cfg, sprintf('FRONTIER SOURCE %d/%d | node=%d | local candidates=%d', ...
+            i, numel(sourceNodes), sourceNodes(i).node_id, numel(localCandidates)));
+
+        if isempty(localCandidates)
+            continue
+        end
+
+        for j = 1:numel(localCandidates)
+            testedEdges = testedEdges + 1;
+
+            dstPoint = localCandidates(j);
+
             rec = empty_transition_record();
             rec.stage = "frontier";
             rec.source_node_id = sourceNodes(i).node_id;
@@ -546,7 +581,7 @@ function out = run_frontier_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
             rec.target_static_solver = dstStatic.static_solver;
             rec.target_static_usable = dstStatic.static_usable;
 
-            dstRun = run_mpc_chunk(dstPoint, cfg, srcRun.terminal_ctx);
+            dstRun = run_mpc_chunk(dstPoint, cfg, src.terminal_ctx);
 
             rec.solver_feasible = dstRun.solver_feasible;
             rec.usable_feasible = dstRun.usable_feasible;
@@ -570,15 +605,31 @@ function out = run_frontier_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
                 rec.target_node_id = find_node_id(newNodeRegistry, dstPoint.node_key);
             end
 
-            edgeResults(edgeIdx) = rec;
+            edgeResults(end+1,1) = rec; %#ok<AGROW>
 
-            if mod(edgeIdx, cfg.autosave_every) == 0 || edgeIdx == nEdges
+            if ~dstRun.solver_feasible && cfg.print_failure_snapshot
+                log_msg(fid, cfg, sprintf('FRONTIER FAIL | src=%d -> target=%s | reason=%s | fail_t=%.3f | exitflag=%g', ...
+                    rec.source_node_id, char(rec.target_key), dstRun.fail_reason, dstRun.fail_time_s, dstRun.quadprog_exitflag));
+            end
+
+            if mod(testedEdges, cfg.autosave_every) == 0
                 save(fullfile(runDir, ['transition_frontier_partial_' runStamp '.mat']), 'edgeResults', 'newNodeRegistry');
             end
         end
     end
 
-    edgeResults = edgeResults(1:edgeIdx);
+    if isempty(edgeResults)
+        log_msg(fid, cfg, 'FRONTIER SUMMARY END | no frontier edges were executed.');
+        out = struct();
+        out.nodeRegistry = newNodeRegistry;
+        out.summary = struct( ...
+            'edge_table', table(), ...
+            'n_edges', 0, ...
+            'n_solver_feasible_edges', 0, ...
+            'n_usable_feasible_edges', 0);
+        return
+    end
+
     edgeTable = transition_records_to_table(edgeResults);
 
     edgeCsv = fullfile(runDir, ['transition_frontier_edges_' runStamp '.csv']);
@@ -610,6 +661,18 @@ function out = run_adaptive_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
 
     currentDepth = 1;
     frontierKeys = get_frontier_keys(newNodeRegistry, currentDepth);
+
+    if isempty(frontierKeys)
+        log_msg(fid, cfg, 'ADAPTIVE STAGE SKIPPED | no depth-1 frontier nodes are available.');
+        out = struct();
+        out.nodeRegistry = newNodeRegistry;
+        out.summary = struct( ...
+            'edge_table', table(), ...
+            'n_edges', 0, ...
+            'n_solver_feasible_edges', 0, ...
+            'n_usable_feasible_edges', 0);
+        return
+    end
 
     while currentDepth <= cfg.adaptive_max_depth && ~isempty(frontierKeys)
         log_msg(fid, cfg, sprintf('ADAPTIVE DEPTH %d START | frontier nodes = %d', currentDepth, numel(frontierKeys)));
@@ -689,6 +752,11 @@ function out = run_adaptive_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
             end
         end
 
+        if isempty(edgeResults)
+            log_msg(fid, cfg, sprintf('ADAPTIVE DEPTH %d END | no edges executed.', currentDepth + 1));
+            break
+        end
+
         levelCsv = fullfile(runDir, sprintf('transition_adaptive_depth_%02d_%s.csv', currentDepth + 1, runStamp));
         levelMat = fullfile(runDir, sprintf('transition_adaptive_depth_%02d_%s.mat', currentDepth + 1, runStamp));
 
@@ -707,6 +775,18 @@ function out = run_adaptive_stage(nodeRegistry, staticTable, cfg, fid, runDir, r
 
         frontierKeys = unique(newKeysThisDepth);
         currentDepth = currentDepth + 1;
+    end
+
+    if isempty(allEdgeResults)
+        log_msg(fid, cfg, 'ADAPTIVE STAGE END | no adaptive edges were generated.');
+        out = struct();
+        out.nodeRegistry = newNodeRegistry;
+        out.summary = struct( ...
+            'edge_table', table(), ...
+            'n_edges', 0, ...
+            'n_solver_feasible_edges', 0, ...
+            'n_usable_feasible_edges', 0);
+        return
     end
 
     allEdgeCsv = fullfile(runDir, ['transition_adaptive_all_edges_' runStamp '.csv']);
@@ -1290,6 +1370,7 @@ end
 
 function T = node_registry_to_table(nodeRegistry)
     n = numel(nodeRegistry);
+
     node_id = nan(n,1);
     node_key = strings(n,1);
     rhoR = nan(n,1);
@@ -1305,23 +1386,28 @@ function T = node_registry_to_table(nodeRegistry)
     quality_class = strings(n,1);
 
     for i = 1:n
-        node_id(i) = nodeRegistry(i).node_id;
-        node_key(i) = string(nodeRegistry(i).node_key);
-        rhoR(i) = nodeRegistry(i).rhoR;
-        v_cmd(i) = nodeRegistry(i).v_cmd;
-        a_cmd(i) = nodeRegistry(i).a_cmd;
-        is_static_seed(i) = nodeRegistry(i).is_static_seed;
-        static_solver_feasible(i) = nodeRegistry(i).static_solver_feasible;
-        static_usable(i) = nodeRegistry(i).static_usable;
-        ever_solver_feasible(i) = nodeRegistry(i).ever_solver_feasible;
-        ever_usable_feasible(i) = nodeRegistry(i).ever_usable_feasible;
-        min_depth(i) = nodeRegistry(i).min_depth;
-        node_class(i) = string(nodeRegistry(i).node_class);
-        quality_class(i) = string(nodeRegistry(i).quality_class);
+        node_id(i) = scalar_double(nodeRegistry(i).node_id);
+        node_key(i) = string_scalar(nodeRegistry(i).node_key);
+        rhoR(i) = scalar_double(nodeRegistry(i).rhoR);
+        v_cmd(i) = scalar_double(nodeRegistry(i).v_cmd);
+        a_cmd(i) = scalar_double(nodeRegistry(i).a_cmd);
+
+        is_static_seed(i) = scalar_logical(nodeRegistry(i).is_static_seed);
+        static_solver_feasible(i) = scalar_logical(nodeRegistry(i).static_solver_feasible);
+        static_usable(i) = scalar_logical(nodeRegistry(i).static_usable);
+        ever_solver_feasible(i) = scalar_logical(nodeRegistry(i).ever_solver_feasible);
+        ever_usable_feasible(i) = scalar_logical(nodeRegistry(i).ever_usable_feasible);
+
+        min_depth(i) = scalar_double(nodeRegistry(i).min_depth);
+        node_class(i) = string_scalar(nodeRegistry(i).node_class);
+        quality_class(i) = string_scalar(nodeRegistry(i).quality_class);
     end
 
-    T = table(node_id, node_key, rhoR, v_cmd, a_cmd, is_static_seed, static_solver_feasible, static_usable, ...
-        ever_solver_feasible, ever_usable_feasible, min_depth, node_class, quality_class);
+    T = table(node_id, node_key, rhoR, v_cmd, a_cmd, ...
+        is_static_seed, static_solver_feasible, static_usable, ...
+        ever_solver_feasible, ever_usable_feasible, min_depth, ...
+        node_class, quality_class);
+
     T = sortrows(T, {'min_depth','v_cmd','a_cmd','rhoR'});
 end
 
@@ -1817,5 +1903,37 @@ function y = nan_safe_col(x)
         y = [];
     else
         y = nan(size(x(:)));
+    end
+end
+
+function y = scalar_logical(x)
+    if isempty(x)
+        y = false;
+    elseif islogical(x) || isnumeric(x)
+        y = logical(x(1));
+    else
+        y = false;
+    end
+end
+
+function y = scalar_double(x)
+    if isempty(x)
+        y = NaN;
+    elseif isnumeric(x) || islogical(x)
+        y = double(x(1));
+    else
+        y = NaN;
+    end
+end
+
+function y = string_scalar(x)
+    if isempty(x)
+        y = "";
+    elseif isstring(x)
+        y = x(1);
+    elseif ischar(x)
+        y = string(x);
+    else
+        y = "";
     end
 end
