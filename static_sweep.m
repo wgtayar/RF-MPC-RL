@@ -31,7 +31,7 @@ function Results = static_sweep(sweepCfg)
     if fid < 0
         error('Could not create log file: %s', txtFile);
     end
-    cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
+    cleanupObj = onCleanup(@() fclose(fid));
 
     log_msg(fid, sweepCfg, 'STATIC SWEEP START');
     log_msg(fid, sweepCfg, ['Run directory: ' runDir]);
@@ -276,6 +276,8 @@ function [gridTable, meta] = build_static_grid(sweepCfg)
 end
 
 function caseResult = simulate_static_case(rhoR, vCmd, aCmd, sweepCfg)
+    reset_mpc_case_state();
+    
     gait = sweepCfg.gait;
     rlCfg = sweepCfg.rlCfg;
 
