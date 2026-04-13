@@ -22,6 +22,7 @@ function Results = static_sweep(sweepCfg)
     end
 
     matFile = fullfile(runDir, ['static_sweep_results_' runStamp '.mat']);
+    bufferMatFile = fullfile(runDir, ['static_sweep_buffer_current_' runStamp '.mat']);
     csvFile = fullfile(runDir, ['static_sweep_cases_' runStamp '.csv']);
     rhoCsvFile = fullfile(runDir, ['static_sweep_summary_by_rho_' runStamp '.csv']);
     vaCsvFile = fullfile(runDir, ['static_sweep_summary_by_va_' runStamp '.csv']);
@@ -53,7 +54,10 @@ function Results = static_sweep(sweepCfg)
     log_msg(fid, sweepCfg, sprintf('a count = %d', numel(sweepCfg.a_vals)));
     log_msg(fid, sweepCfg, sprintf('feasible masked combinations to test = %d', nCases));
 
-    caseResults(nCases,1) = empty_case_result();
+    bufferResults = repmat(empty_case_result(), sweepCfg.flush_every_cases, 1);
+    bufferCount = 0;
+    csvInitialized = false;
+    nFlushed = 0;
 
     tSweep = tic;
 
@@ -67,15 +71,16 @@ function Results = static_sweep(sweepCfg)
         end
 
         caseResult = simulate_static_case(rhoR, vCmd, aCmd, sweepCfg);
-
+        
         caseResult.case_idx = idx;
         caseResult.run_stamp = runStamp;
         caseResult.run_dir = runDir;
-
-        caseResults(idx) = caseResult;
-
+        
+        bufferCount = bufferCount + 1;
+        bufferResults(bufferCount) = caseResult;
+        
         log_msg(fid, sweepCfg, format_case_log_line(caseResult, nCases));
-
+        
         if ~caseResult.feasible && sweepCfg.print_failure_snapshot
             failLine = sprintf(['FAIL SNAPSHOT | case=%d | reason=%s | fail_iter=%g | fail_t=%.3f | ' ...
                 'fsm=%s | com_speed=%.4f | state_norm=%.4f | input_norm=%.4f | h_rcond=%.3e | ' ...
@@ -87,35 +92,66 @@ function Results = static_sweep(sweepCfg)
                 caseResult.fail_Aeq_rows, caseResult.fail_Aeq_cols);
             log_msg(fid, sweepCfg, failLine);
         end
-
-        if mod(idx, sweepCfg.autosave_every) == 0 || idx == nCases
-            Results = package_results(caseResults(1:idx), meta, sweepCfg, runDir, runStamp);
-            save(matFile, 'Results');
+        
+        shouldFlush = (bufferCount >= sweepCfg.flush_every_cases) || (idx == nCases);
+        
+        if shouldFlush
+            flushBlock = bufferResults(1:bufferCount);
+        
+            save(bufferMatFile, 'flushBlock', 'meta', 'sweepCfg', 'runDir', 'runStamp');
+        
+            flushTable = case_results_to_table(flushBlock);
+        
+            if ~csvInitialized
+                writetable(flushTable, csvFile);
+                csvInitialized = true;
+            else
+                writetable(flushTable, csvFile, 'WriteMode', 'append');
+            end
+        
+            nFlushed = nFlushed + bufferCount;
+        
+            log_msg(fid, sweepCfg, sprintf('FLUSH | wrote %d rows to CSV | total written=%d', ...
+                bufferCount, nFlushed));
+        
+            bufferResults = repmat(empty_case_result(), sweepCfg.flush_every_cases, 1);
+            bufferCount = 0;
+        
+            flushBlock = struct([]);
+            save(bufferMatFile, 'flushBlock');
         end
     end
 
     totalElapsed = toc(tSweep);
-
-    caseTable = case_results_to_table(caseResults);
-    writetable(caseTable, csvFile);
-
+    
+    caseTable = readtable(csvFile);
+    
     rhoTable = summarize_by_rho(caseTable);
     writetable(rhoTable, rhoCsvFile);
-
+    
     vaTable = summarize_by_va(caseTable);
     writetable(vaTable, vaCsvFile);
-
-    Results = package_results(caseResults, meta, sweepCfg, runDir, runStamp);
+    
+    Results = struct();
+    Results.run_stamp = runStamp;
+    Results.run_dir = runDir;
+    Results.created_at = datestr(now, 'yyyy-mm-dd HH:MM:SS');
+    Results.meta = meta;
+    Results.sweepCfg = sweepCfg;
+    Results.total_elapsed_sec = totalElapsed;
+    Results.case_csv = csvFile;
+    Results.summary_by_rho_csv = rhoCsvFile;
+    Results.summary_by_va_csv = vaCsvFile;
     Results.case_table = caseTable;
     Results.summary_by_rho = rhoTable;
     Results.summary_by_va = vaTable;
-    Results.total_elapsed_sec = totalElapsed;
-
-    save(matFile, 'Results');
+    
+    save(matFile, 'Results', '-v7.3');
 
     write_final_summary(fid, sweepCfg, Results);
 
     log_msg(fid, sweepCfg, sprintf('MAT file: %s', matFile));
+    log_msg(fid, sweepCfg, sprintf('Rolling buffer MAT: %s', bufferMatFile));
     log_msg(fid, sweepCfg, sprintf('Case CSV: %s', csvFile));
     log_msg(fid, sweepCfg, sprintf('Rho summary CSV: %s', rhoCsvFile));
     log_msg(fid, sweepCfg, sprintf('VA summary CSV: %s', vaCsvFile));
@@ -136,7 +172,6 @@ function sweepCfg = fill_static_sweep_defaults(sweepCfg, rootDir)
     end
 
     if ~isfield(sweepCfg, 'rhoR_vals')
-        % sweepCfg.rhoR_vals = 0.50:0.25:3.00;
         sweepCfg.rhoR_vals = 0.85:0.05:1.15;
     end
 
@@ -145,7 +180,7 @@ function sweepCfg = fill_static_sweep_defaults(sweepCfg, rootDir)
     end
 
     if ~isfield(sweepCfg, 'a_vals')
-        sweepCfg.a_vals = 0.2:0.2:4.0;
+        sweepCfg.a_vals = 0.5:0.2:2.0;
     end
 
     if ~isfield(sweepCfg, 'use_feasible_va_mask')
@@ -186,6 +221,14 @@ function sweepCfg = fill_static_sweep_defaults(sweepCfg, rootDir)
 
     if ~isfield(sweepCfg, 'autosave_every')
         sweepCfg.autosave_every = 25;
+    end
+
+    if ~isfield(sweepCfg, 'flush_every_cases')
+        sweepCfg.flush_every_cases = 400;
+    end
+    
+    if ~isfield(sweepCfg, 'keep_case_structs_in_final_mat')
+        sweepCfg.keep_case_structs_in_final_mat = false;
     end
 
     if ~isfield(sweepCfg, 'print_to_cli')
@@ -833,16 +876,6 @@ function s = build_success_snapshot(iter, tNow, Xt, Ut, Xd, Ud, FSM, qpDiag, zva
         s.Ud1 = first_col_or_vector(Ud);
         s.FSM = FSM;
     end
-end
-
-function Results = package_results(caseResults, meta, sweepCfg, runDir, runStamp)
-    Results = struct();
-    Results.run_stamp = runStamp;
-    Results.run_dir = runDir;
-    Results.created_at = datestr(now, 'yyyy-mm-dd HH:MM:SS');
-    Results.meta = meta;
-    Results.sweepCfg = sweepCfg;
-    Results.cases = caseResults;
 end
 
 function T = case_results_to_table(caseResults)
