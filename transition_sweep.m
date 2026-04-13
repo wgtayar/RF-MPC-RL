@@ -26,7 +26,7 @@ function Results = transition_sweep(cfg)
     if fid < 0
         error('Could not create transition log file: %s', txtFile);
     end
-    cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
+    cleanupObj = onCleanup(@() fclose(fid));    
 
     log_msg(fid, cfg, 'TRANSITION SWEEP START');
     log_msg(fid, cfg, ['Run directory: ' runDir]);
