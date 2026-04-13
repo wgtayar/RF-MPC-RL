@@ -49,9 +49,21 @@ function Results = static_sweep(sweepCfg)
     [gridTable, meta] = build_static_grid(sweepCfg);
     nCases = height(gridTable);
 
-    log_msg(fid, sweepCfg, sprintf('rho_R count = %d', numel(sweepCfg.rhoR_vals)));
-    log_msg(fid, sweepCfg, sprintf('v count = %d', numel(sweepCfg.v_vals)));
-    log_msg(fid, sweepCfg, sprintf('a count = %d', numel(sweepCfg.a_vals)));
+    if sweepCfg.use_anisotropic_R
+        log_msg(fid, sweepCfg, sprintf('safe isotropic rho count = %d', numel(sweepCfg.safe_iso_rho_vals)));
+        log_msg(fid, sweepCfg, sprintf('safe v count = %d', numel(sweepCfg.safe_v_vals)));
+        log_msg(fid, sweepCfg, sprintf('safe a count = %d', numel(sweepCfg.safe_a_vals)));
+        log_msg(fid, sweepCfg, sprintf('aggressive rho1 count = %d', numel(sweepCfg.aggr_rho1_vals)));
+        log_msg(fid, sweepCfg, sprintf('aggressive rho2 count = %d', numel(sweepCfg.aggr_rho2_vals)));
+        log_msg(fid, sweepCfg, sprintf('aggressive rho3 count = %d', numel(sweepCfg.aggr_rho3_vals)));
+        log_msg(fid, sweepCfg, sprintf('aggressive v count = %d', numel(sweepCfg.aggr_v_vals)));
+        log_msg(fid, sweepCfg, sprintf('aggressive a count = %d', numel(sweepCfg.aggr_a_vals)));
+    else
+        log_msg(fid, sweepCfg, sprintf('safe isotropic rho count = %d', numel(sweepCfg.safe_iso_rho_vals)));
+        log_msg(fid, sweepCfg, sprintf('safe v count = %d', numel(sweepCfg.safe_v_vals)));
+        log_msg(fid, sweepCfg, sprintf('safe a count = %d', numel(sweepCfg.safe_a_vals)));
+    end
+    
     log_msg(fid, sweepCfg, sprintf('feasible masked combinations to test = %d', nCases));
 
     bufferResults = repmat(empty_case_result(), sweepCfg.flush_every_cases, 1);
@@ -62,15 +74,18 @@ function Results = static_sweep(sweepCfg)
     tSweep = tic;
 
     for idx = 1:nCases
-        rhoR = gridTable.rhoR(idx);
+        rhoR1 = gridTable.rhoR1(idx);
+        rhoR2 = gridTable.rhoR2(idx);
+        rhoR3 = gridTable.rhoR3(idx);
         vCmd = gridTable.v_cmd(idx);
         aCmd = gridTable.a_cmd(idx);
 
         if sweepCfg.print_case_start
-            log_msg(fid, sweepCfg, sprintf('START CASE %d/%d | rhoR=%.3f | v=%.3f | a=%.3f', idx, nCases, rhoR, vCmd, aCmd));
+            log_msg(fid, sweepCfg, sprintf('START CASE %d/%d | rho=[%.3f %.3f %.3f] | v=%.3f | a=%.3f', ...
+                idx, nCases, rhoR1, rhoR2, rhoR3, vCmd, aCmd));
         end
 
-        caseResult = simulate_static_case(rhoR, vCmd, aCmd, sweepCfg);
+        caseResult = simulate_static_case(rhoR1, rhoR2, rhoR3, vCmd, aCmd, sweepCfg);
         
         caseResult.case_idx = idx;
         caseResult.run_stamp = runStamp;
@@ -171,16 +186,40 @@ function sweepCfg = fill_static_sweep_defaults(sweepCfg, rootDir)
         sweepCfg.chunk_duration = 5;
     end
 
-    if ~isfield(sweepCfg, 'rhoR_vals')
-        sweepCfg.rhoR_vals = 0.85:0.05:1.15;
+    if ~isfield(sweepCfg, 'use_anisotropic_R')
+        sweepCfg.use_anisotropic_R = true;
     end
-
-    if ~isfield(sweepCfg, 'v_vals')
-        sweepCfg.v_vals = 0.3:0.1:1.5;
+    
+    if ~isfield(sweepCfg, 'safe_iso_rho_vals')
+        sweepCfg.safe_iso_rho_vals = [0.9 1.0 1.1];
     end
-
-    if ~isfield(sweepCfg, 'a_vals')
-        sweepCfg.a_vals = 0.5:0.2:2.0;
+    
+    if ~isfield(sweepCfg, 'safe_v_vals')
+        sweepCfg.safe_v_vals = 0.3:0.2:0.7;
+    end
+    
+    if ~isfield(sweepCfg, 'safe_a_vals')
+        sweepCfg.safe_a_vals = [0.5 0.9 1.3 1.7];
+    end
+    
+    if ~isfield(sweepCfg, 'aggr_rho1_vals')
+        sweepCfg.aggr_rho1_vals = [0.6 0.8 1.0 1.2 1.4 1.6];
+    end
+    
+    if ~isfield(sweepCfg, 'aggr_rho2_vals')
+        sweepCfg.aggr_rho2_vals = [0.8 1.0 1.2 1.4 1.6 1.8];
+    end
+    
+    if ~isfield(sweepCfg, 'aggr_rho3_vals')
+        sweepCfg.aggr_rho3_vals = [0.8 1.0 1.2 1.4 1.6 1.8];
+    end
+    
+    if ~isfield(sweepCfg, 'aggr_v_vals')
+        sweepCfg.aggr_v_vals = 0.8:0.1:1.5;
+    end
+    
+    if ~isfield(sweepCfg, 'aggr_a_vals')
+        sweepCfg.aggr_a_vals = [1.1 1.5 1.9 2.3 2.7 3.1 3.5 3.9];
     end
 
     if ~isfield(sweepCfg, 'use_feasible_va_mask')
@@ -288,44 +327,120 @@ function rlCfg = build_fallback_rl_cfg(rootDir)
     rlCfg.PROXY.Nhip = 6;
 end
 
+
 function [gridTable, meta] = build_static_grid(sweepCfg)
-    [RHO, VV, AA] = ndgrid(sweepCfg.rhoR_vals, sweepCfg.v_vals, sweepCfg.a_vals);
 
-    rhoList = RHO(:);
-    vList = VV(:);
-    aList = AA(:);
+    if ~sweepCfg.use_anisotropic_R
+        [RHO, VV, AA] = ndgrid(sweepCfg.safe_iso_rho_vals, sweepCfg.safe_v_vals, sweepCfg.safe_a_vals);
 
-    if sweepCfg.use_feasible_va_mask
-        aLo = max(min(sweepCfg.a_vals), vList ./ sweepCfg.tacc_max);
-        aHi = min(max(sweepCfg.a_vals), vList ./ sweepCfg.tacc_min);
-        mask = aList >= aLo & aList <= aHi;
+        rho1 = RHO(:);
+        rho2 = RHO(:);
+        rho3 = RHO(:);
+        vList = VV(:);
+        aList = AA(:);
+
+        if sweepCfg.use_feasible_va_mask
+            aLo = max(min(sweepCfg.safe_a_vals), vList ./ sweepCfg.tacc_max);
+            aHi = min(max(sweepCfg.safe_a_vals), vList ./ sweepCfg.tacc_min);
+            mask = aList >= aLo & aList <= aHi;
+        else
+            mask = true(size(vList));
+        end
+
+        gridTable = table(rho1(mask), rho2(mask), rho3(mask), vList(mask), aList(mask), ...
+            'VariableNames', {'rhoR1','rhoR2','rhoR3','v_cmd','a_cmd'});
+
     else
-        mask = true(size(rhoList));
+        % ---- SAFE REGION: isotropic and cheap ----
+        [RS, VS, AS] = ndgrid(sweepCfg.safe_iso_rho_vals, sweepCfg.safe_v_vals, sweepCfg.safe_a_vals);
+
+        safe_rho1 = RS(:);
+        safe_rho2 = RS(:);
+        safe_rho3 = RS(:);
+        safe_v = VS(:);
+        safe_a = AS(:);
+
+        if sweepCfg.use_feasible_va_mask
+            aLo_safe = max(min(sweepCfg.safe_a_vals), safe_v ./ sweepCfg.tacc_max);
+            aHi_safe = min(max(sweepCfg.safe_a_vals), safe_v ./ sweepCfg.tacc_min);
+            safeMask = safe_a >= aLo_safe & safe_a <= aHi_safe;
+        else
+            safeMask = true(size(safe_v));
+        end
+
+        safeTable = table( ...
+            safe_rho1(safeMask), safe_rho2(safeMask), safe_rho3(safeMask), safe_v(safeMask), safe_a(safeMask), ...
+            'VariableNames', {'rhoR1','rhoR2','rhoR3','v_cmd','a_cmd'});
+
+        % ---- AGGRESSIVE REGION: anisotropic and focused ----
+        [R1, R2, R3, VV, AA] = ndgrid( ...
+            sweepCfg.aggr_rho1_vals, ...
+            sweepCfg.aggr_rho2_vals, ...
+            sweepCfg.aggr_rho3_vals, ...
+            sweepCfg.aggr_v_vals, ...
+            sweepCfg.aggr_a_vals);
+
+        aggr_rho1 = R1(:);
+        aggr_rho2 = R2(:);
+        aggr_rho3 = R3(:);
+        aggr_v = VV(:);
+        aggr_a = AA(:);
+
+        if sweepCfg.use_feasible_va_mask
+            aLo_aggr = max(min(sweepCfg.aggr_a_vals), aggr_v ./ sweepCfg.tacc_max);
+            aHi_aggr = min(max(sweepCfg.aggr_a_vals), aggr_v ./ sweepCfg.tacc_min);
+            aggrMask = aggr_a >= aLo_aggr & aggr_a <= aHi_aggr;
+        else
+            aggrMask = true(size(aggr_v));
+        end
+
+        aggrTable = table( ...
+            aggr_rho1(aggrMask), aggr_rho2(aggrMask), aggr_rho3(aggrMask), aggr_v(aggrMask), aggr_a(aggrMask), ...
+            'VariableNames', {'rhoR1','rhoR2','rhoR3','v_cmd','a_cmd'});
+
+        gridTable = [safeTable; aggrTable];
+        gridTable = unique(gridTable, 'rows');
     end
 
-    gridTable = table(rhoList(mask), vList(mask), aList(mask), ...
-        'VariableNames', {'rhoR', 'v_cmd', 'a_cmd'});
+    gridTable.rhoR_mean = mean([gridTable.rhoR1 gridTable.rhoR2 gridTable.rhoR3], 2);
+    gridTable.rhoR_min = min([gridTable.rhoR1 gridTable.rhoR2 gridTable.rhoR3], [], 2);
+    gridTable.rhoR_max = max([gridTable.rhoR1 gridTable.rhoR2 gridTable.rhoR3], [], 2);
 
-    gridTable = sortrows(gridTable, {'v_cmd', 'a_cmd', 'rhoR'});
+    gridTable = sortrows(gridTable, {'v_cmd','a_cmd','rhoR_mean','rhoR1','rhoR2','rhoR3'});
 
     meta = struct();
-    meta.rhoR_vals = sweepCfg.rhoR_vals;
-    meta.v_vals = sweepCfg.v_vals;
-    meta.a_vals = sweepCfg.a_vals;
+    meta.use_anisotropic_R = sweepCfg.use_anisotropic_R;
+    meta.safe_iso_rho_vals = sweepCfg.safe_iso_rho_vals;
+    meta.safe_v_vals = sweepCfg.safe_v_vals;
+    meta.safe_a_vals = sweepCfg.safe_a_vals;
+    meta.aggr_rho1_vals = sweepCfg.aggr_rho1_vals;
+    meta.aggr_rho2_vals = sweepCfg.aggr_rho2_vals;
+    meta.aggr_rho3_vals = sweepCfg.aggr_rho3_vals;
+    meta.aggr_v_vals = sweepCfg.aggr_v_vals;
+    meta.aggr_a_vals = sweepCfg.aggr_a_vals;
     meta.use_feasible_va_mask = sweepCfg.use_feasible_va_mask;
     meta.tacc_min = sweepCfg.tacc_min;
     meta.tacc_max = sweepCfg.tacc_max;
     meta.static_scope = 'absolute_combination_from_nominal_reset_only';
 end
 
-function caseResult = simulate_static_case(rhoR, vCmd, aCmd, sweepCfg)
+function caseResult = simulate_static_case(rhoR1, rhoR2, rhoR3, vCmd, aCmd, sweepCfg)
     reset_mpc_case_state();
     
     gait = sweepCfg.gait;
     rlCfg = sweepCfg.rlCfg;
 
     p = get_params(gait);
-    p.R = rhoR * p.R;
+    p_nom = get_params(gait);
+    
+    baseDiag = diag(p_nom.R);
+    baseR1 = baseDiag(1);
+    baseR2 = baseDiag(2);
+    baseR3 = baseDiag(3);
+    
+    usedDiag = repmat([rhoR1 * baseR1; rhoR2 * baseR2; rhoR3 * baseR3], 4, 1);
+    p.R = diag(usedDiag);
+    
     p.vel_d = [vCmd; 0];
     p.acc_d = aCmd;
     p.yaw_d = 0;
@@ -340,7 +455,13 @@ function caseResult = simulate_static_case(rhoR, vCmd, aCmd, sweepCfg)
     usedRDiag = diag(p.R);
 
     caseResult = empty_case_result();
-    caseResult.rhoR = rhoR;
+    caseResult.rhoR1 = rhoR1;
+    caseResult.rhoR2 = rhoR2;
+    caseResult.rhoR3 = rhoR3;
+    caseResult.rhoR_mean = mean([rhoR1 rhoR2 rhoR3]);
+    caseResult.rhoR_min = min([rhoR1 rhoR2 rhoR3]);
+    caseResult.rhoR_max = max([rhoR1 rhoR2 rhoR3]);
+    caseResult.rhoR = caseResult.rhoR_mean;
     caseResult.v_cmd = vCmd;
     caseResult.a_cmd = aCmd;
     caseResult.chunk_duration = sweepCfg.chunk_duration;
@@ -883,6 +1004,12 @@ function T = case_results_to_table(caseResults)
 
     case_idx = zeros(n,1);
     rhoR = zeros(n,1);
+    rhoR1 = zeros(n,1);
+    rhoR2 = zeros(n,1);
+    rhoR3 = zeros(n,1);
+    rhoR_mean = zeros(n,1);
+    rhoR_min = zeros(n,1);
+    rhoR_max = zeros(n,1);
     v_cmd = zeros(n,1);
     a_cmd = zeros(n,1);
     feasible = false(n,1);
@@ -924,6 +1051,12 @@ function T = case_results_to_table(caseResults)
         c = caseResults(i);
         case_idx(i) = c.case_idx;
         rhoR(i) = c.rhoR;
+        rhoR1(i) = c.rhoR1;
+        rhoR2(i) = c.rhoR2;
+        rhoR3(i) = c.rhoR3;
+        rhoR_mean(i) = c.rhoR_mean;
+        rhoR_min(i) = c.rhoR_min;
+        rhoR_max(i) = c.rhoR_max;
         v_cmd(i) = c.v_cmd;
         a_cmd(i) = c.a_cmd;
         feasible(i) = c.feasible;
@@ -963,7 +1096,8 @@ function T = case_results_to_table(caseResults)
     end
 
     T = table( ...
-        case_idx, rhoR, v_cmd, a_cmd, feasible, fail_reason, root_cause_inference, ...
+        case_idx, rhoR, rhoR1, rhoR2, rhoR3, rhoR_mean, rhoR_min, rhoR_max, ...
+        v_cmd, a_cmd, feasible, fail_reason, root_cause_inference, ...
         fail_iter, fail_time_s, quadprog_exitflag, ...
         sim_time_completed_s, tracking_error_total, tracking_error_mean, control_effort_total, control_effort_mean, ...
         state_norm_start, state_norm_end, state_norm_max, input_norm_max, ...
@@ -1119,7 +1253,13 @@ function c = empty_case_result()
         'fail_Aineq_rows', NaN, ...
         'fail_Aineq_cols', NaN, ...
         'fail_Aeq_rows', NaN, ...
-        'fail_Aeq_cols', NaN);
+        'fail_Aeq_cols', NaN, ...
+        'rhoR1', NaN, ...
+        'rhoR2', NaN, ...
+        'rhoR3', NaN, ...
+        'rhoR_mean', NaN, ...
+        'rhoR_min', NaN, ...
+        'rhoR_max', NaN);
 end
 
 function s = empty_iter_log()
@@ -1261,15 +1401,17 @@ end
 
 function s = format_case_log_line(caseResult, nCases)
     if caseResult.feasible
-        s = sprintf(['CASE %d/%d | rhoR=%.3f | v=%.3f | a=%.3f | feasible=1 | ' ...
+        s = sprintf(['CASE %d/%d | rho=[%.3f %.3f %.3f] | v=%.3f | a=%.3f | feasible=1 | ' ...
             'track=%.3f | effort=%.3f | Ieq=%.3f | SOC_end=%.2f | elapsed=%.2f s'], ...
-            caseResult.case_idx, nCases, caseResult.rhoR, caseResult.v_cmd, caseResult.a_cmd, ...
+            caseResult.case_idx, nCases, caseResult.rhoR1, caseResult.rhoR2, caseResult.rhoR3, ...
+            caseResult.v_cmd, caseResult.a_cmd, ...
             caseResult.tracking_error_mean, caseResult.control_effort_mean, ...
             caseResult.Ieq_A, caseResult.soc_end_pct, caseResult.elapsed_sec);
     else
-        s = sprintf(['CASE %d/%d | rhoR=%.3f | v=%.3f | a=%.3f | feasible=0 | ' ...
+        s = sprintf(['CASE %d/%d | rho=[%.3f %.3f %.3f] | v=%.3f | a=%.3f | feasible=0 | ' ...
             'reason=%s | root=%s | fail_iter=%g | fail_t=%.3f | exitflag=%g | elapsed=%.2f s'], ...
-            caseResult.case_idx, nCases, caseResult.rhoR, caseResult.v_cmd, caseResult.a_cmd, ...
+            caseResult.case_idx, nCases, caseResult.rhoR1, caseResult.rhoR2, caseResult.rhoR3, ...
+            caseResult.v_cmd, caseResult.a_cmd, ...
             caseResult.fail_reason, caseResult.root_cause_inference, caseResult.fail_iter, caseResult.fail_time_s, ...
             caseResult.quadprog_exitflag, caseResult.elapsed_sec);
     end
