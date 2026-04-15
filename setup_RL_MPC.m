@@ -1,4 +1,5 @@
 function setup_RL_MPC()
+    addpath fcns\ fcns_MPC\ 'RL Midtraining Logs'\
     rootDir = fileparts(mfilename('fullpath'));
     cfgPath = fullfile(rootDir, 'rlEnv_MPC_R.mat');
 
