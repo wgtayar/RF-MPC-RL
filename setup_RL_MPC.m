@@ -6,12 +6,15 @@ function setup_RL_MPC()
     p = get_params(gait);
 
     initial_R = [p.R(1,1); p.R(2,2); p.R(3,3)];
-    lower_abs = 0.5 * initial_R;
-    upper_abs = 3.0 * initial_R;
+    % lower_abs = 0.5 * initial_R;
+    % upper_abs = 3.0 * initial_R;
+
+    lower_abs = [0.7; 0.8; 0.8] .* initial_R;
+    upper_abs = [1.4; 1.4; 1.4] .* initial_R;
 
     cfg.CHUNK_DURATION = 5;
     cfg.APPLY_EVERY = 10;
-    cfg.MISSION_DURATION = 15 * 60; % or 30 * 60
+    cfg.MISSION_DURATION = 10 * 60; % or 30 * 60
     cfg.EP_STEPS = cfg.MISSION_DURATION / (cfg.CHUNK_DURATION * cfg.APPLY_EVERY);
 
     cfg.V_MIN = 0.3;
@@ -24,7 +27,7 @@ function setup_RL_MPC()
     cfg.V_REQ_FIXED = 0.8;
     cfg.A_REQ_FIXED = 1.0;
 
-    cfg.DR_MAX = 0.15; % was 0.25
+    cfg.DR_MAX = 0.1; % was 0.25 then 0.15
     cfg.GAMMA_V_MIN = 0.5;
     cfg.GAMMA_V_MAX = 1.0;
     cfg.GAMMA_A_MIN = 0.5;
@@ -58,6 +61,12 @@ function setup_RL_MPC()
     cfg.PROXY.Nknee = 6 / 1.55;
     cfg.PROXY.tauHip4_joint = 6.114;
     cfg.PROXY.Nhip = 6;
+
+    cfg.OBS.COM_SPEED_MAX = 8.0;
+    cfg.OBS.TST_RATIO_MIN = 0.5;
+    cfg.OBS.TST_RATIO_MAX = 1.1;
+    cfg.OBS.STATE_NORM_MAX = 150.0;
+    cfg.OBS.NOMINAL_TST = p.Tst;
 
     cfg.REWARD.batt_thresh = 0.5;
     cfg.REWARD.batt_slope = 12;
@@ -102,7 +111,7 @@ function setup_RL_MPC()
     
     save(cfgPath, 'lower_abs', 'upper_abs', 'initial_R', 'cfg');
 
-    obsInfo = rlNumericSpec([11 1], 'Name', 'observations');
+    obsInfo = rlNumericSpec([15 1], 'Name', 'observations');
 
     actionLower = [-cfg.DR_MAX; -cfg.DR_MAX; -cfg.DR_MAX; cfg.GAMMA_V_MIN; cfg.GAMMA_A_MIN];
     actionUpper = [cfg.DR_MAX; cfg.DR_MAX; cfg.DR_MAX; cfg.GAMMA_V_MAX; cfg.GAMMA_A_MAX];
@@ -117,7 +126,7 @@ function setup_RL_MPC()
     actionBias = (actionUpper + actionLower) / 2;
 
     actorLayers = [
-        featureInputLayer(11, 'Name', 'obs')
+        featureInputLayer(15, 'Name', 'obs')
         fullyConnectedLayer(400, 'Name', 'actor_fc1')
         reluLayer('Name', 'actor_relu1')
         fullyConnectedLayer(300, 'Name', 'actor_fc2')
@@ -133,7 +142,7 @@ function setup_RL_MPC()
         rlOptimizerOptions("LearnRate", 1e-3, "GradientThreshold", 1));
 
     statePath = [
-        featureInputLayer(11, 'Name', 'obs')
+        featureInputLayer(15, 'Name', 'obs')
         fullyConnectedLayer(400, 'Name', 'state_fc1')
         reluLayer('Name', 'state_relu1')
     ];

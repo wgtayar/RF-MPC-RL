@@ -96,6 +96,19 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
             chunkRow.state_norm_end = simOut.state_norm_end;
             chunkRow.input_norm_end = simOut.input_norm_end;
             chunkRow.com_speed_end = simOut.com_speed_end;
+            if isfield(simOut, 'Tst_end')
+                chunkRow.Tst_end = simOut.Tst_end;
+            else
+                chunkRow.Tst_end = NaN;
+            end
+            
+            chunkRow.state_norm_proxy = simOut.state_norm_end;
+            
+            if isfield(simOut, 'fsm_leg1_end') && isfinite(simOut.fsm_leg1_end)
+                chunkRow.fsm_proxy = simOut.fsm_leg1_end - 1;
+            else
+                chunkRow.fsm_proxy = NaN;
+            end
             if isfield(simOut, 'fsm_leg1_end')
                 chunkRow.fsm_leg1_end = simOut.fsm_leg1_end;
             else
@@ -193,6 +206,34 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     window_time = sum(T_all);
     dsoc = soc_end - soc_start;
 
+    if exist('simOut', 'var') && isstruct(simOut)
+        com_speed_mag = simOut.com_speed_end;
+    
+        if isfield(simOut, 'Tst_end') && isfinite(simOut.Tst_end) && cfg.OBS.NOMINAL_TST > 0
+            tst_ratio = simOut.Tst_end / cfg.OBS.NOMINAL_TST;
+        else
+            tst_ratio = 1.0;
+        end
+    
+        if isfield(simOut, 'state_norm_end') && isfinite(simOut.state_norm_end)
+            state_norm_proxy = simOut.state_norm_end;
+        else
+            state_norm_proxy = 0;
+        end
+    
+        if isfield(simOut, 'fsm_leg1_end') && isfinite(simOut.fsm_leg1_end)
+            % stance=1 -> 0, swing=2 -> 1
+            fsm_proxy = simOut.fsm_leg1_end - 1;
+        else
+            fsm_proxy = 0;
+        end
+    else
+        com_speed_mag = 0;
+        tst_ratio = 1.0;
+        state_norm_proxy = 0;
+        fsm_proxy = 0;
+    end
+
     logged.step_idx = logged.step_idx + 1;
     logged.last_R = R_new;
     logged.v_exec = v_exec;
@@ -237,6 +278,10 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     
         decisionRow.nt = nt;
         decisionRow.nu = nu;
+        decisionRow.com_speed_mag = com_speed_mag;
+        decisionRow.tst_ratio = tst_ratio;
+        decisionRow.state_norm_proxy = state_norm_proxy;
+        decisionRow.fsm_proxy = fsm_proxy;
         decisionRow.reward = reward;
         decisionRow.feasible = feasible;
         decisionRow.terminal_reason = string(window.terminal_reason);
@@ -252,8 +297,29 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
     last_R = R_new;
     save(lastRPath, 'last_R');
-
-    nextObs = build_rl_observation(nt, nu, battery, progress_next, logged.v_req, logged.a_req, v_exec, a_exec, R_new, lower_abs, upper_abs, cfg);
+    
+    com_speed_mag = simOut.com_speed_end;
+    
+    if isfield(simOut, 'Tst_end') && isfinite(simOut.Tst_end) && cfg.OBS.NOMINAL_TST > 0
+        tst_ratio = simOut.Tst_end / cfg.OBS.NOMINAL_TST;
+    else
+        tst_ratio = 1.0;
+    end
+    
+    state_norm_proxy = simOut.state_norm_end;
+    
+    if isfield(simOut, 'fsm_leg1_end') && isfinite(simOut.fsm_leg1_end)
+        % stance = 1 -> 0, swing = 2 -> 1
+        fsm_proxy = simOut.fsm_leg1_end - 1;
+    else
+        fsm_proxy = 0;
+    end
+    
+    nextObs = build_rl_observation( ...
+        nt, nu, battery, progress_next, ...
+        logged.v_req, logged.a_req, v_exec, a_exec, ...
+        R_new, lower_abs, upper_abs, cfg, ...
+        com_speed_mag, tst_ratio, state_norm_proxy, fsm_proxy);
 
     isDone = ~feasible || battery.margin_norm <= cfg.BATTERY.terminal_margin || logged.step_idx >= cfg.EP_STEPS;
 

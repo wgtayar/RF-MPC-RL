@@ -92,6 +92,8 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
     knee_t = nan(max_iter, 1);
     knee_tau4 = nan(max_iter, 1);
     knee_I4 = nan(max_iter, 1);
+    Tst_log = nan(max_iter, 1);
+    Tsw_log = nan(max_iter, 1);
     
     feasible = true;
     fail_iter = NaN;
@@ -125,6 +127,13 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
             knee_t(ii) = kneeOut.t;
             knee_tau4(ii) = kneeOut.tau4;
             knee_I4(ii) = kneeOut.I4;
+            
+            if isfield(Sim.kneeProxyState, 'Tst') && isfinite(Sim.kneeProxyState.Tst)
+                Tst_log(ii) = Sim.kneeProxyState.Tst;
+            end
+            if isfield(Sim.kneeProxyState, 'Tsw') && isfinite(Sim.kneeProxyState.Tsw)
+                Tsw_log(ii) = Sim.kneeProxyState.Tsw;
+            end
 
             [H, g, Aineq, bineq, Aeq, beq] = fcn_get_QP_form_eta(Xt, Ut, Xd, Ud, p);
             
@@ -209,7 +218,22 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
         out.input_norm_end = norm(Ut);
         out.com_speed_end = norm(Xt(4:5));
         out.fsm_leg1_end = NaN;
-    
+        
+        lastTst = find(isfinite(Tst_log), 1, 'last');
+        lastTsw = find(isfinite(Tsw_log), 1, 'last');
+        
+        if isempty(lastTst)
+            out.Tst_end = NaN;
+        else
+            out.Tst_end = Tst_log(lastTst);
+        end
+        
+        if isempty(lastTsw)
+            out.Tsw_end = NaN;
+        else
+            out.Tsw_end = Tsw_log(lastTsw);
+        end
+        
         return
     end
 
@@ -278,4 +302,19 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
     out.input_norm_end = norm(Ut);
     out.com_speed_end = norm(Xt(4:5));
     out.fsm_leg1_end = fsm_leg1(max(find(isfinite(fsm_leg1),1,'last'),1));
+    
+    lastTst = find(isfinite(Tst_log), 1, 'last');
+    lastTsw = find(isfinite(Tsw_log), 1, 'last');
+    
+    if isempty(lastTst)
+        out.Tst_end = NaN;
+    else
+        out.Tst_end = Tst_log(lastTst);
+    end
+    
+    if isempty(lastTsw)
+        out.Tsw_end = NaN;
+    else
+        out.Tsw_end = Tsw_log(lastTsw);
+    end
 end
