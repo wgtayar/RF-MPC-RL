@@ -49,7 +49,7 @@ function setup_RL_MPC()
     cfg.BATTERY.DoD = 0.8;
     cfg.BATTERY.use_pack_sizing = false;
     cfg.BATTERY.n_series = 4;
-    cfg.BATTERY.n_parallel = 4;
+    cfg.BATTERY.n_parallel = 5;
     cfg.BATTERY.decim = 10;
     cfg.BATTERY.make_plots = false;
 
