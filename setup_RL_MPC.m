@@ -28,11 +28,11 @@ function setup_RL_MPC()
     cfg.V_REQ_FIXED = 0.8;
     cfg.A_REQ_FIXED = 1.0;
 
-    cfg.DR_MAX = 0.1; % was 0.25 then 0.15
-    cfg.GAMMA_V_MIN = 0.5;
-    cfg.GAMMA_V_MAX = 1.0;
-    cfg.GAMMA_A_MIN = 0.5;
-    cfg.GAMMA_A_MAX = 1.0;
+    cfg.DR_MAX = 0.05; % was 0.25 then 0.15
+    cfg.GAMMA_V_MIN = 0.1; % 0.5
+    cfg.GAMMA_V_MAX = 0.5; % 1.0
+    cfg.GAMMA_A_MIN = 0.1; % 0.5
+    cfg.GAMMA_A_MAX = 0.5; % 1.0
 
     cfg.TRACK_REF = 16.21;
     cfg.EFFORT_REF = 5.4e4;
