@@ -61,6 +61,8 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
         Sim.kneeProxyState = init_knee_proxy_state();
     end
 
+    x_start = Xt(1);
+
     if ~isfield(Sim, 'current_time')
         Sim.current_time = [];
     end
@@ -233,6 +235,9 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
         else
             out.Tsw_end = Tsw_log(lastTsw);
         end
+
+        out.x_end = Xt(1);
+        out.dx_forward = Xt(1) - x_start;
         
         return
     end
@@ -317,4 +322,7 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg)
     else
         out.Tsw_end = Tsw_log(lastTsw);
     end
+
+    out.x_end = Xt(1);
+    out.dx_forward = Xt(1) - x_start;
 end

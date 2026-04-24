@@ -26,6 +26,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     ue_all = zeros(cfg.APPLY_EVERY, 1);
     Q_all = zeros(cfg.APPLY_EVERY, 1);
     T_all = zeros(cfg.APPLY_EVERY, 1);
+    DX_all = zeros(cfg.APPLY_EVERY, 1);
     feasible = true;
     fail_reason = '';
     battery = logged.battery;
@@ -38,6 +39,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         ue_all(k) = simOut.control_effort_total;
         Q_all(k) = simOut.charge_total;
         T_all(k) = simOut.current_duration;
+        DX_all(k) = simOut.dx_forward;
         battery = simOut.battery;
 
         chunk_abs = (decision_idx - 1) * cfg.APPLY_EVERY + k;
@@ -77,6 +79,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
             chunkRow.Q_chunk_As = Q_all(k);
             chunkRow.T_chunk_s = T_all(k);
             chunkRow.Ieq_chunk_A = Ieq_chunk;
+            chunkRow.dx_chunk_m = DX_all(k);
         
             chunkRow.feasible = simOut.feasible;
             chunkRow.fail_reason = string(simOut.fail_reason);
@@ -180,19 +183,45 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     window.a_exec = a_exec;
 
     soc_end = battery.soc_pct;
-    progress_next = decision_idx / cfg.EP_STEPS;
-
+    
+    window_distance = sum(DX_all);
+    distance_next = max(0, logged.distance_m + window_distance);
+    
+    time_frac_next = min(decision_idx / cfg.EP_STEPS, 1);
+    progress_next = min(distance_next / cfg.MISSION.D_TARGET_M, 1);
+    lag_frac_next = max(0, time_frac_next - progress_next);
+    
     window.progress_frac = progress_next;
+    window.time_frac = time_frac_next;
+    window.lag_frac = lag_frac_next;
+    
+    window.distance_start_m = logged.distance_m;
+    window.window_distance_m = window_distance;
+    window.distance_end_m = distance_next;
+    
     window.soc_start_pct = soc_start;
     window.soc_end_pct = soc_end;
-    window.completed_episode = feasible && (decision_idx >= cfg.EP_STEPS);
-
+    
+    window.delta_v_exec = v_exec - logged.v_exec;
+    window.delta_a_exec = a_exec - logged.a_exec;
+    window.delta_gamma_v = gamma_v - logged.prev_gamma_v;
+    window.delta_gamma_a = gamma_a - logged.prev_gamma_a;
+    window.prev_Ieq_window = logged.prev_Ieq_window;
+    
+    window.dR1 = dR_frac(1);
+    window.dR2 = dR_frac(2);
+    window.dR3 = dR_frac(3);
+    
+    window.completed_episode = feasible && (distance_next >= cfg.MISSION.D_TARGET_M);
+    
     if ~feasible
         window.terminal_reason = 'infeasible';
+    elseif window.completed_episode
+        window.terminal_reason = 'mission_complete';
     elseif battery.margin_norm <= cfg.BATTERY.terminal_margin
         window.terminal_reason = 'battery_terminal';
     elseif decision_idx >= cfg.EP_STEPS
-        window.terminal_reason = 'max_steps';
+        window.terminal_reason = 'time_limit';
     else
         window.terminal_reason = '';
     end
@@ -238,6 +267,10 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     logged.last_R = R_new;
     logged.v_exec = v_exec;
     logged.a_exec = a_exec;
+    logged.prev_gamma_v = gamma_v;
+    logged.prev_gamma_a = gamma_a;
+    logged.prev_Ieq_window = Ieq_window;
+    logged.distance_m = distance_next;
     logged.battery = battery;
     logged.window = info;
     logged.episode_charge_total = logged.episode_charge_total + window_charge;
@@ -249,6 +282,11 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.episode_idx = logged.episode_idx;
         decisionRow.decision_idx = decision_idx;
         decisionRow.progress_frac = progress_next;
+        decisionRow.time_frac = time_frac_next;
+        decisionRow.lag_frac = lag_frac_next;
+        decisionRow.distance_start_m = window.distance_start_m;
+        decisionRow.window_distance_m = window.window_distance_m;
+        decisionRow.distance_end_m = window.distance_end_m;
     
         decisionRow.dR1 = dR_frac(1);
         decisionRow.dR2 = dR_frac(2);
@@ -272,6 +310,12 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.window_charge_As = window_charge;
         decisionRow.window_time_s = window_time;
         decisionRow.Ieq_window_A = Ieq_window;
+
+        decisionRow.prev_Ieq_window_A = window.prev_Ieq_window;
+        decisionRow.delta_v_exec = window.delta_v_exec;
+        decisionRow.delta_a_exec = window.delta_a_exec;
+        decisionRow.delta_gamma_v = window.delta_gamma_v;
+        decisionRow.delta_gamma_a = window.delta_gamma_a;
     
         decisionRow.tracking_error_mean = window.tracking_error_mean;
         decisionRow.control_effort_mean = window.control_effort_mean;
@@ -316,12 +360,13 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     end
     
     nextObs = build_rl_observation( ...
-        nt, nu, battery, progress_next, ...
+        nt, nu, battery, progress_next, lag_frac_next, ...
         logged.v_req, logged.a_req, v_exec, a_exec, ...
         R_new, lower_abs, upper_abs, cfg, ...
-        com_speed_mag, tst_ratio, state_norm_proxy, fsm_proxy);
+        com_speed_mag, tst_ratio, state_norm_proxy, fsm_proxy, ...
+        gamma_v, gamma_a, Ieq_window);
 
-    isDone = ~feasible || battery.margin_norm <= cfg.BATTERY.terminal_margin || logged.step_idx >= cfg.EP_STEPS;
+    isDone = ~feasible || window.completed_episode || battery.margin_norm <= cfg.BATTERY.terminal_margin || logged.step_idx >= cfg.EP_STEPS;
 
     if isfield(cfg, 'RUN') && cfg.RUN.enabled && isfield(cfg, 'CHECKPOINT')
         shouldSaveCheckpoint = mod(decision_idx, cfg.CHECKPOINT.every_decisions) == 0 || isDone;
@@ -379,10 +424,12 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     if isDone && isfield(cfg, 'LOG') && cfg.LOG.enable && cfg.LOG.print_episode
         if ~feasible
             reason = 'infeasible';
+        elseif window.completed_episode
+            reason = 'mission_complete';
         elseif battery.margin_norm <= cfg.BATTERY.terminal_margin
             reason = 'battery_terminal';
         else
-            reason = 'max_steps';
+            reason = 'time_limit';
         end
 
         fprintf('[EP %d END] reason=%s, final_SOC=%.2f%%, total_Q=%.3f A*s, total_time=%.1f s\n\n', ...

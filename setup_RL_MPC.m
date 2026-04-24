@@ -15,11 +15,14 @@ function setup_RL_MPC()
 
     cfg.CHUNK_DURATION = 5;
     cfg.APPLY_EVERY = 10;
-    cfg.MISSION_DURATION = 10 * 60; % or 30 * 60
+    cfg.MISSION_DURATION = 10 * 60;
     cfg.EP_STEPS = cfg.MISSION_DURATION / (cfg.CHUNK_DURATION * cfg.APPLY_EVERY);
-
+    
+    cfg.MISSION.D_TARGET_M = 300;
+    cfg.MISSION.WINDOW_TARGET_M = cfg.MISSION.D_TARGET_M / cfg.EP_STEPS;
+    
     cfg.V_MIN = 0.3;
-    cfg.V_MAX = 1.5;
+    cfg.V_MAX = 1.1;
     cfg.A_MIN = 0.2;
     cfg.A_MAX = 4.0;
     cfg.TACC_MIN = 0.2;
@@ -69,32 +72,60 @@ function setup_RL_MPC()
     cfg.OBS.STATE_NORM_MAX = 150.0;
     cfg.OBS.NOMINAL_TST = p.Tst;
 
-    cfg.REWARD.batt_thresh = 0.5;
-    cfg.REWARD.batt_slope = 12;
-    cfg.REWARD.w_batt = 1.0;
-    cfg.REWARD.w_track = 0.02;
-    cfg.REWARD.w_effort = 0.01;
-    cfg.REWARD.w_energy_high = 0.2;
-    cfg.REWARD.w_energy_low = 0.6;
-    cfg.REWARD.w_cmd_high = 0.4;
-    cfg.REWARD.w_cmd_low = 0.15;
-    cfg.REWARD.w_vcmd = 1.0;
-    cfg.REWARD.w_acmd = 0.25;
-    cfg.REWARD.terminal_battery_penalty = 25;
-    cfg.RESET_R_EACH_EPISODE = true;
-
-    cfg.REWARD.w_progress = 2.5;
-    cfg.REWARD.completion_bonus = 40;
-
-    cfg.REWARD.w_soc = 0.25;
-    cfg.REWARD.w_dsoc = 12;
-    cfg.REWARD.w_low_soc = 1.0;
-
-    cfg.REWARD.infeasible_base = 20;
+    cfg.REWARD.w_dist = 12.0;
+    cfg.REWARD.w_lag = 10.0;
+    cfg.REWARD.w_risk = 2.5;
+    cfg.REWARD.w_I = 0.15;
+    cfg.REWARD.w_dsoc = 6.0;
+    cfg.REWARD.w_track = 0.01;
+    cfg.REWARD.w_effort = 0.005;
+    cfg.REWARD.w_slow = 1.5;
+    
+    cfg.REWARD.v_floor_soft = 0.45;
+    
+    cfg.REWARD.risk_I_thr = 45.0;
+    cfg.REWARD.risk_I_scale = 5.0;
+    
+    cfg.REWARD.risk_track_thr = cfg.TRACK_REF;
+    cfg.REWARD.risk_track_scale = cfg.TRACK_REF;
+    
+    cfg.REWARD.risk_v_thr = 0.40;
+    cfg.REWARD.risk_v_scale = 0.15;
+    
+    cfg.REWARD.risk_a_thr = 0.80;
+    cfg.REWARD.risk_a_scale = 0.40;
+    
+    cfg.REWARD.risk_dv_thr = 0.08;
+    cfg.REWARD.risk_dv_scale = 0.08;
+    
+    cfg.REWARD.risk_dgv_thr = 0.08;
+    cfg.REWARD.risk_dgv_scale = 0.08;
+    
+    cfg.REWARD.risk_r2_thr = 0.02;
+    cfg.REWARD.risk_r2_scale = 0.03;
+    
+    cfg.REWARD.alpha_I = 1.0;
+    cfg.REWARD.alpha_track = 1.0;
+    cfg.REWARD.alpha_v = 0.7;
+    cfg.REWARD.alpha_a = 0.6;
+    cfg.REWARD.alpha_dv = 1.2;
+    cfg.REWARD.alpha_dgv = 1.2;
+    cfg.REWARD.alpha_r2 = 0.8;
+    
+    cfg.REWARD.complete_bonus = 80;
+    cfg.REWARD.early_bonus = 40;
+    cfg.REWARD.final_soc_bonus = 20;
+    
+    cfg.REWARD.infeasible_base = 40;
     cfg.REWARD.infeasible_remaining = 80;
     
-    cfg.REWARD.battery_base = 10;
-    cfg.REWARD.battery_remaining = 40;
+    cfg.REWARD.battery_base = 25;
+    cfg.REWARD.battery_remaining = 60;
+    
+    cfg.REWARD.time_limit_base = 35;
+    cfg.REWARD.time_limit_remaining = 70;
+
+    cfg.RESET_R_EACH_EPISODE = true;
 
     cfg.LOG.enable = false;
     cfg.LOG.print_chunk = true;
@@ -112,7 +143,7 @@ function setup_RL_MPC()
     
     save(cfgPath, 'lower_abs', 'upper_abs', 'initial_R', 'cfg');
 
-    obsInfo = rlNumericSpec([15 1], 'Name', 'observations');
+    obsInfo = rlNumericSpec([19 1], 'Name', 'observations');
 
     actionLower = [-cfg.DR_MAX; -cfg.DR_MAX; -cfg.DR_MAX; cfg.GAMMA_V_MIN; cfg.GAMMA_A_MIN];
     actionUpper = [cfg.DR_MAX; cfg.DR_MAX; cfg.DR_MAX; cfg.GAMMA_V_MAX; cfg.GAMMA_A_MAX];
@@ -127,7 +158,7 @@ function setup_RL_MPC()
     actionBias = (actionUpper + actionLower) / 2;
 
     actorLayers = [
-        featureInputLayer(15, 'Name', 'obs')
+        featureInputLayer(19, 'Name', 'obs')
         fullyConnectedLayer(400, 'Name', 'actor_fc1')
         reluLayer('Name', 'actor_relu1')
         fullyConnectedLayer(300, 'Name', 'actor_fc2')
@@ -143,7 +174,7 @@ function setup_RL_MPC()
         rlOptimizerOptions("LearnRate", 1e-3, "GradientThreshold", 1));
 
     statePath = [
-        featureInputLayer(15, 'Name', 'obs')
+        featureInputLayer(19, 'Name', 'obs')
         fullyConnectedLayer(400, 'Name', 'state_fc1')
         reluLayer('Name', 'state_relu1')
     ];
