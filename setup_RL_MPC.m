@@ -32,10 +32,16 @@ function setup_RL_MPC()
     cfg.A_REQ_FIXED = 1.0;
 
     cfg.DR_MAX = 0.05; % was 0.25 then 0.15
-    cfg.GAMMA_V_MIN = 0.1; % 0.5
-    cfg.GAMMA_V_MAX = 0.5; % 1.0
+    cfg.GAMMA_V_MIN = 0.0; % 0.5
+    cfg.GAMMA_V_MAX = 1.0; % 1.0
     cfg.GAMMA_A_MIN = 0.1; % 0.5
     cfg.GAMMA_A_MAX = 0.5; % 1.0
+
+    cfg.GAMMA_V_MISSION = (cfg.MISSION.D_TARGET_M / cfg.MISSION_DURATION - cfg.V_MIN) / ...
+        max(cfg.V_MAX - cfg.V_MIN, eps);
+    cfg.GAMMA_V_MISSION = min(max(cfg.GAMMA_V_MISSION, cfg.GAMMA_V_MIN), cfg.GAMMA_V_MAX);
+    
+    cfg.DGAMMA_V_MAX = 0.10;
 
     cfg.TRACK_REF = 16.21;
     cfg.EFFORT_REF = 5.4e4;
@@ -72,9 +78,15 @@ function setup_RL_MPC()
     cfg.OBS.STATE_NORM_MAX = 150.0;
     cfg.OBS.NOMINAL_TST = p.Tst;
 
-    cfg.REWARD.w_dist = 12.0;
-    cfg.REWARD.w_lag = 10.0;
+    cfg.REWARD.w_pace = 8.0;
+    cfg.REWARD.w_shortfall = 16.0;
+    cfg.REWARD.w_ahead = 6.0;
+    
+    cfg.REWARD.w_lag_linear = 18.0;
+    cfg.REWARD.w_lag_quad = 8.0;
+    
     cfg.REWARD.w_risk = 2.5;
+    
     cfg.REWARD.w_I = 0.15;
     cfg.REWARD.w_dsoc = 6.0;
     cfg.REWARD.w_track = 0.01;
@@ -83,14 +95,15 @@ function setup_RL_MPC()
     
     cfg.REWARD.v_floor_soft = 0.45;
     
+    cfg.REWARD.soc_safe_thresh = 0.50;
+    cfg.REWARD.soc_terminal_thresh = 0.15;
+    cfg.REWARD.soc_gate_strength = 4.0;
+    
     cfg.REWARD.risk_I_thr = 45.0;
     cfg.REWARD.risk_I_scale = 5.0;
     
     cfg.REWARD.risk_track_thr = cfg.TRACK_REF;
     cfg.REWARD.risk_track_scale = cfg.TRACK_REF;
-    
-    cfg.REWARD.risk_v_thr = 0.40;
-    cfg.REWARD.risk_v_scale = 0.15;
     
     cfg.REWARD.risk_a_thr = 0.80;
     cfg.REWARD.risk_a_scale = 0.40;
@@ -104,26 +117,29 @@ function setup_RL_MPC()
     cfg.REWARD.risk_r2_thr = 0.02;
     cfg.REWARD.risk_r2_scale = 0.03;
     
+    cfg.REWARD.dynamic_gate_v_thr = 0.35;
+    cfg.REWARD.dynamic_gate_v_scale = 0.15;
+    
     cfg.REWARD.alpha_I = 1.0;
     cfg.REWARD.alpha_track = 1.0;
-    cfg.REWARD.alpha_v = 0.7;
     cfg.REWARD.alpha_a = 0.6;
     cfg.REWARD.alpha_dv = 1.2;
     cfg.REWARD.alpha_dgv = 1.2;
     cfg.REWARD.alpha_r2 = 0.8;
     
-    cfg.REWARD.complete_bonus = 80;
-    cfg.REWARD.early_bonus = 40;
-    cfg.REWARD.final_soc_bonus = 20;
+    cfg.REWARD.complete_bonus = 100;
+    cfg.REWARD.early_bonus = 50;
+    cfg.REWARD.final_soc_bonus = 25;
     
-    cfg.REWARD.infeasible_base = 40;
-    cfg.REWARD.infeasible_remaining = 80;
+    cfg.REWARD.infeasible_base = 80;
+    cfg.REWARD.infeasible_remaining = 160;
+    cfg.REWARD.infeasible_lag = 80;
     
-    cfg.REWARD.battery_base = 25;
-    cfg.REWARD.battery_remaining = 60;
+    cfg.REWARD.battery_base = 35;
+    cfg.REWARD.battery_remaining = 90;
     
-    cfg.REWARD.time_limit_base = 35;
-    cfg.REWARD.time_limit_remaining = 70;
+    cfg.REWARD.time_limit_base = 50;
+    cfg.REWARD.time_limit_remaining = 120;
 
     cfg.RESET_R_EACH_EPISODE = true;
 

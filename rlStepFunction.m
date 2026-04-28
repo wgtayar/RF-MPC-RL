@@ -9,8 +9,18 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     upper_abs = S.upper_abs;
 
     dR_frac = action(1:3);
-    gamma_v = action(4);
+    gamma_v_raw = action(4);
     gamma_a = action(5);
+    
+    if isfield(cfg, 'DGAMMA_V_MAX') && isfield(logged, 'prev_gamma_v')
+        gamma_v = min(max(gamma_v_raw, logged.prev_gamma_v - cfg.DGAMMA_V_MAX), ...
+            logged.prev_gamma_v + cfg.DGAMMA_V_MAX);
+    else
+        gamma_v = gamma_v_raw;
+    end
+    
+    gamma_v = min(max(gamma_v, cfg.GAMMA_V_MIN), cfg.GAMMA_V_MAX);
+    gamma_a = min(max(gamma_a, cfg.GAMMA_A_MIN), cfg.GAMMA_A_MAX);
 
     R_new = logged.last_R .* (1 + dR_frac);
     R_new = min(max(R_new, lower_abs), upper_abs);
@@ -64,6 +74,9 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
             chunkRow.dR3 = dR_frac(3);
             chunkRow.gamma_v = gamma_v;
             chunkRow.gamma_a = gamma_a;
+
+            chunkRow.gamma_v_raw = gamma_v_raw;
+            chunkRow.v_from_gamma = cfg.V_MIN + gamma_v * (cfg.V_MAX - cfg.V_MIN);
         
             chunkRow.R1 = R_new(1);
             chunkRow.R2 = R_new(2);
@@ -293,7 +306,10 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.dR3 = dR_frac(3);
         decisionRow.gamma_v = gamma_v;
         decisionRow.gamma_a = gamma_a;
-    
+
+        decisionRow.gamma_v_raw = gamma_v_raw;
+        decisionRow.v_from_gamma = cfg.V_MIN + gamma_v * (cfg.V_MAX - cfg.V_MIN);
+
         decisionRow.R1 = R_new(1);
         decisionRow.R2 = R_new(2);
         decisionRow.R3 = R_new(3);
@@ -382,6 +398,8 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
             checkpoint.dR_frac = dR_frac(:).';
             checkpoint.gamma_v = gamma_v;
             checkpoint.gamma_a = gamma_a;
+
+            checkpoint.gamma_v_raw = gamma_v_raw;
     
             checkpoint.R_new = R_new(:).';
             checkpoint.v_req = logged.v_req;
