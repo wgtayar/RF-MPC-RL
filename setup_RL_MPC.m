@@ -27,13 +27,13 @@ function setup_RL_MPC()
     cfg.A_MAX = 4.0;
     cfg.TACC_MIN = 0.2;
     cfg.TACC_MAX = 2.0;
-    cfg.RANDOMIZE_REQUEST = true;
-    cfg.V_REQ_FIXED = 0.8;
+    cfg.RANDOMIZE_REQUEST = false;
+    cfg.V_REQ_FIXED = cfg.MISSION.D_TARGET_M / cfg.MISSION_DURATION;
     cfg.A_REQ_FIXED = 1.0;
 
     cfg.DR_MAX = 0.05; % was 0.25 then 0.15
     cfg.GAMMA_V_MIN = 0.0; % 0.5
-    cfg.GAMMA_V_MAX = 1.0; % 1.0
+    cfg.GAMMA_V_MAX = 0.4; % 1.0
     cfg.GAMMA_A_MIN = 0.1; % 0.5
     cfg.GAMMA_A_MAX = 0.5; % 1.0
 
@@ -41,7 +41,7 @@ function setup_RL_MPC()
         max(cfg.V_MAX - cfg.V_MIN, eps);
     cfg.GAMMA_V_MISSION = min(max(cfg.GAMMA_V_MISSION, cfg.GAMMA_V_MIN), cfg.GAMMA_V_MAX);
     
-    cfg.DGAMMA_V_MAX = 0.10;
+    cfg.DGAMMA_V_MAX = 0.05;
 
     cfg.TRACK_REF = 16.21;
     cfg.EFFORT_REF = 5.4e4;
@@ -50,9 +50,9 @@ function setup_RL_MPC()
     cfg.BATTERY.metric_type = 'soc';
     cfg.BATTERY.SOC_init = 0.95;
     cfg.BATTERY.metric_init = 100 * cfg.BATTERY.SOC_init;
-    cfg.BATTERY.metric_min = 20;
+    cfg.BATTERY.metric_min = 15;
     cfg.BATTERY.metric_max = 100;
-    cfg.BATTERY.terminal_margin = 0.20;
+    cfg.BATTERY.terminal_margin = 0.15;
     cfg.BATTERY.C_nom_Ah = 2.0;
     cfg.BATTERY.pack_voltage = 12;
     cfg.BATTERY.DoD = 0.8;
@@ -80,12 +80,12 @@ function setup_RL_MPC()
 
     cfg.REWARD.w_pace = 8.0;
     cfg.REWARD.w_shortfall = 16.0;
-    cfg.REWARD.w_ahead = 6.0;
+    cfg.REWARD.w_ahead = 4.0;
     
     cfg.REWARD.w_lag_linear = 18.0;
     cfg.REWARD.w_lag_quad = 8.0;
     
-    cfg.REWARD.w_risk = 2.5;
+    cfg.REWARD.w_risk = 2.0;
     
     cfg.REWARD.w_I = 0.15;
     cfg.REWARD.w_dsoc = 6.0;
@@ -93,26 +93,31 @@ function setup_RL_MPC()
     cfg.REWARD.w_effort = 0.005;
     cfg.REWARD.w_slow = 1.5;
     
+    cfg.REWARD.nt_cap = 50.0;
+    cfg.REWARD.nu_cap = 50.0;
+    
     cfg.REWARD.v_floor_soft = 0.45;
     
     cfg.REWARD.soc_safe_thresh = 0.50;
     cfg.REWARD.soc_terminal_thresh = 0.15;
     cfg.REWARD.soc_gate_strength = 4.0;
     
+    cfg.REWARD.risk_component_cap = 5.0;
+    
     cfg.REWARD.risk_I_thr = 45.0;
-    cfg.REWARD.risk_I_scale = 5.0;
+    cfg.REWARD.risk_I_scale = 15.0;
     
     cfg.REWARD.risk_track_thr = cfg.TRACK_REF;
-    cfg.REWARD.risk_track_scale = cfg.TRACK_REF;
+    cfg.REWARD.risk_track_ref = 1000.0;
     
     cfg.REWARD.risk_a_thr = 0.80;
     cfg.REWARD.risk_a_scale = 0.40;
     
-    cfg.REWARD.risk_dv_thr = 0.08;
-    cfg.REWARD.risk_dv_scale = 0.08;
+    cfg.REWARD.risk_dv_thr = 0.06;
+    cfg.REWARD.risk_dv_scale = 0.06;
     
-    cfg.REWARD.risk_dgv_thr = 0.08;
-    cfg.REWARD.risk_dgv_scale = 0.08;
+    cfg.REWARD.risk_dgv_thr = 0.06;
+    cfg.REWARD.risk_dgv_scale = 0.06;
     
     cfg.REWARD.risk_r2_thr = 0.02;
     cfg.REWARD.risk_r2_scale = 0.03;
@@ -131,7 +136,7 @@ function setup_RL_MPC()
     cfg.REWARD.early_bonus = 50;
     cfg.REWARD.final_soc_bonus = 25;
     
-    cfg.REWARD.infeasible_base = 80;
+    cfg.REWARD.infeasible_base = 100;
     cfg.REWARD.infeasible_remaining = 160;
     cfg.REWARD.infeasible_lag = 80;
     
@@ -226,7 +231,7 @@ function setup_RL_MPC()
         'MiniBatchSize', 64, ...
         'ExperienceBufferLength', 1e6);
 
-    agentOpts.NoiseOptions.Variance = 0.15^2;
+    agentOpts.NoiseOptions.Variance = 0.08^2;
     agentOpts.NoiseOptions.VarianceDecayRate = 0;
 
     agent = rlDDPGAgent(actor, critic, agentOpts);

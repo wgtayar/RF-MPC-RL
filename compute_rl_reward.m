@@ -1,6 +1,9 @@
 function [reward, info] = compute_rl_reward(window, cfg)
-    nt = window.tracking_error_mean / cfg.TRACK_REF;
-    nu = window.control_effort_mean / cfg.EFFORT_REF;
+    nt_raw = window.tracking_error_mean / cfg.TRACK_REF;
+    nu_raw = window.control_effort_mean / cfg.EFFORT_REF;
+
+    nt = min(max(nt_raw, 0), cfg.REWARD.nt_cap);
+    nu = min(max(nu_raw, 0), cfg.REWARD.nu_cap);
 
     if isfinite(window.Ieq_window)
         Ieq_norm = window.Ieq_window / cfg.IEQ_REF;
@@ -37,13 +40,29 @@ function [reward, info] = compute_rl_reward(window, cfg)
     slow_pen = pos((cfg.REWARD.v_floor_soft - window.v_exec) / ...
         max(cfg.REWARD.v_floor_soft - cfg.V_MIN, eps));
 
-    risk_I = pos((window.Ieq_window - cfg.REWARD.risk_I_thr) / cfg.REWARD.risk_I_scale);
-    risk_track = pos((window.tracking_error_mean - cfg.REWARD.risk_track_thr) / cfg.REWARD.risk_track_scale);
-    risk_a = pos((window.a_exec - cfg.REWARD.risk_a_thr) / cfg.REWARD.risk_a_scale);
+    risk_I = capped_pos( ...
+        (window.Ieq_window - cfg.REWARD.risk_I_thr) / cfg.REWARD.risk_I_scale, ...
+        cfg.REWARD.risk_component_cap);
 
-    risk_dv = pos((window.delta_v_exec - cfg.REWARD.risk_dv_thr) / cfg.REWARD.risk_dv_scale);
-    risk_dgv = pos((window.delta_gamma_v - cfg.REWARD.risk_dgv_thr) / cfg.REWARD.risk_dgv_scale);
-    risk_r2 = pos(((-window.dR2) - cfg.REWARD.risk_r2_thr) / cfg.REWARD.risk_r2_scale);
+    track_log = log1p(max(window.tracking_error_mean, 0) / cfg.REWARD.risk_track_ref);
+    track_thr_log = log1p(cfg.REWARD.risk_track_thr / cfg.REWARD.risk_track_ref);
+    risk_track = capped_pos(track_log - track_thr_log, cfg.REWARD.risk_component_cap);
+
+    risk_a = capped_pos( ...
+        (window.a_exec - cfg.REWARD.risk_a_thr) / cfg.REWARD.risk_a_scale, ...
+        cfg.REWARD.risk_component_cap);
+
+    risk_dv = capped_pos( ...
+        (window.delta_v_exec - cfg.REWARD.risk_dv_thr) / cfg.REWARD.risk_dv_scale, ...
+        cfg.REWARD.risk_component_cap);
+
+    risk_dgv = capped_pos( ...
+        (window.delta_gamma_v - cfg.REWARD.risk_dgv_thr) / cfg.REWARD.risk_dgv_scale, ...
+        cfg.REWARD.risk_component_cap);
+
+    risk_r2 = capped_pos( ...
+        ((-window.dR2) - cfg.REWARD.risk_r2_thr) / cfg.REWARD.risk_r2_scale, ...
+        cfg.REWARD.risk_component_cap);
 
     dyn_gate = clamp01((window.v_exec - cfg.REWARD.dynamic_gate_v_thr) / ...
         max(cfg.REWARD.dynamic_gate_v_scale, eps));
@@ -93,6 +112,8 @@ function [reward, info] = compute_rl_reward(window, cfg)
     end
 
     info = struct();
+    info.nt_raw = nt_raw;
+    info.nu_raw = nu_raw;
     info.nt = nt;
     info.nu = nu;
     info.Ieq_norm = Ieq_norm;
@@ -131,6 +152,10 @@ end
 
 function y = pos(x)
     y = max(0, x);
+end
+
+function y = capped_pos(x, capVal)
+    y = min(max(x, 0), capVal);
 end
 
 function y = clamp01(x)
