@@ -10,8 +10,8 @@ function setup_RL_MPC()
     % lower_abs = 0.5 * initial_R;
     % upper_abs = 3.0 * initial_R;
 
-    lower_abs = [0.7; 0.8; 0.8] .* initial_R;
-    upper_abs = [1.4; 1.4; 1.4] .* initial_R;
+    lower_abs = [0.95; 0.95; 0.95] .* initial_R;
+    upper_abs = [1.05; 1.05; 1.05] .* initial_R;
 
     cfg.CHUNK_DURATION = 5;
     cfg.APPLY_EVERY = 10;
@@ -31,7 +31,7 @@ function setup_RL_MPC()
     cfg.V_REQ_FIXED = cfg.MISSION.D_TARGET_M / cfg.MISSION_DURATION;
     cfg.A_REQ_FIXED = 1.0;
 
-    cfg.DR_MAX = 0.05; % was 0.25 then 0.15
+    cfg.DR_MAX = 0.005; % was 0.25 then 0.15
     cfg.GAMMA_V_MIN = 0.0; % 0.5
     cfg.GAMMA_V_MAX = 0.4; % 1.0
     cfg.GAMMA_A_MIN = 0.1; % 0.5
@@ -41,7 +41,7 @@ function setup_RL_MPC()
         max(cfg.V_MAX - cfg.V_MIN, eps);
     cfg.GAMMA_V_MISSION = min(max(cfg.GAMMA_V_MISSION, cfg.GAMMA_V_MIN), cfg.GAMMA_V_MAX);
     
-    cfg.DGAMMA_V_MAX = 0.05;
+    cfg.DGAMMA_V_MAX = 0.03;
 
     cfg.TRACK_REF = 16.21;
     cfg.EFFORT_REF = 5.4e4;
@@ -132,13 +132,13 @@ function setup_RL_MPC()
     cfg.REWARD.alpha_dgv = 1.2;
     cfg.REWARD.alpha_r2 = 0.8;
     
-    cfg.REWARD.complete_bonus = 100;
-    cfg.REWARD.early_bonus = 50;
-    cfg.REWARD.final_soc_bonus = 25;
+    cfg.REWARD.complete_bonus = 160;
+    cfg.REWARD.early_bonus = 80;
+    cfg.REWARD.final_soc_bonus = 30;
     
-    cfg.REWARD.infeasible_base = 100;
-    cfg.REWARD.infeasible_remaining = 160;
-    cfg.REWARD.infeasible_lag = 80;
+    cfg.REWARD.infeasible_base = 70;
+    cfg.REWARD.infeasible_remaining = 120;
+    cfg.REWARD.infeasible_lag = 50;
     
     cfg.REWARD.battery_base = 35;
     cfg.REWARD.battery_remaining = 90;
@@ -231,7 +231,7 @@ function setup_RL_MPC()
         'MiniBatchSize', 64, ...
         'ExperienceBufferLength', 1e6);
 
-    agentOpts.NoiseOptions.Variance = 0.08^2;
+    agentOpts.NoiseOptions.Variance = 0.04^2;
     agentOpts.NoiseOptions.VarianceDecayRate = 0;
 
     agent = rlDDPGAgent(actor, critic, agentOpts);
