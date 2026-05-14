@@ -18,7 +18,7 @@ function setup_RL_MPC()
     cfg.MISSION_DURATION = 10 * 60;
     cfg.EP_STEPS = cfg.MISSION_DURATION / (cfg.CHUNK_DURATION * cfg.APPLY_EVERY);
     
-    cfg.MISSION.D_TARGET_M = 300;
+    cfg.MISSION.D_TARGET_M = 350;
     cfg.MISSION.WINDOW_TARGET_M = cfg.MISSION.D_TARGET_M / cfg.EP_STEPS;
     
     cfg.V_MIN = 0.3;
@@ -33,7 +33,7 @@ function setup_RL_MPC()
 
     cfg.DR_MAX = 0.005; % was 0.25 then 0.15
     cfg.GAMMA_V_MIN = 0.0; % 0.5
-    cfg.GAMMA_V_MAX = 0.4; % 1.0
+    cfg.GAMMA_V_MAX = 0.5; % 1.0
     cfg.GAMMA_A_MIN = 0.1; % 0.5
     cfg.GAMMA_A_MAX = 0.5; % 1.0
 
@@ -50,9 +50,9 @@ function setup_RL_MPC()
     cfg.BATTERY.metric_type = 'soc';
     cfg.BATTERY.SOC_init = 0.95;
     cfg.BATTERY.metric_init = 100 * cfg.BATTERY.SOC_init;
-    cfg.BATTERY.metric_min = 15;
+    cfg.BATTERY.metric_min = 20;
     cfg.BATTERY.metric_max = 100;
-    cfg.BATTERY.terminal_margin = 0.15;
+    cfg.BATTERY.terminal_margin = 0.2;
     cfg.BATTERY.C_nom_Ah = 2.0;
     cfg.BATTERY.pack_voltage = 12;
     cfg.BATTERY.DoD = 0.8;
