@@ -18,7 +18,7 @@ function setup_RL_MPC()
     cfg.MISSION_DURATION = 10 * 60;
     cfg.EP_STEPS = cfg.MISSION_DURATION / (cfg.CHUNK_DURATION * cfg.APPLY_EVERY);
     
-    cfg.MISSION.D_TARGET_M = 350;
+    cfg.MISSION.D_TARGET_M = 300;
     cfg.MISSION.WINDOW_TARGET_M = cfg.MISSION.D_TARGET_M / cfg.EP_STEPS;
     
     cfg.V_MIN = 0.3;
@@ -31,9 +31,9 @@ function setup_RL_MPC()
     cfg.V_REQ_FIXED = cfg.MISSION.D_TARGET_M / cfg.MISSION_DURATION;
     cfg.A_REQ_FIXED = 1.0;
 
-    cfg.DR_MAX = 0.005; % was 0.25 then 0.15
+    cfg.DR_MAX = 0.002; % was 0.25 then 0.15
     cfg.GAMMA_V_MIN = 0.0; % 0.5
-    cfg.GAMMA_V_MAX = 0.5; % 1.0
+    cfg.GAMMA_V_MAX = 0.4; % 1.0
     cfg.GAMMA_A_MIN = 0.1; % 0.5
     cfg.GAMMA_A_MAX = 0.5; % 1.0
 
@@ -58,7 +58,7 @@ function setup_RL_MPC()
     cfg.BATTERY.DoD = 0.8;
     cfg.BATTERY.use_pack_sizing = false;
     cfg.BATTERY.n_series = 4;
-    cfg.BATTERY.n_parallel = 7;
+    cfg.BATTERY.n_parallel = 6;
     cfg.BATTERY.decim = 10;
     cfg.BATTERY.make_plots = false;
 
@@ -99,8 +99,8 @@ function setup_RL_MPC()
     cfg.REWARD.v_floor_soft = 0.45;
     
     cfg.REWARD.soc_safe_thresh = 0.50;
-    cfg.REWARD.soc_terminal_thresh = 0.15;
-    cfg.REWARD.soc_gate_strength = 4.0;
+    cfg.REWARD.soc_terminal_thresh = 0.2;
+    cfg.REWARD.soc_gate_strength = 7.0;
     
     cfg.REWARD.risk_component_cap = 5.0;
     
@@ -145,6 +145,26 @@ function setup_RL_MPC()
     
     cfg.REWARD.time_limit_base = 50;
     cfg.REWARD.time_limit_remaining = 120;
+
+    cfg.REWARD.min_window_target_m = cfg.V_MIN * cfg.CHUNK_DURATION * cfg.APPLY_EVERY;
+
+    cfg.REWARD.I_budget_high = 65.0;
+    cfg.REWARD.I_budget_low = 47.0;
+    cfg.REWARD.I_budget_scale = 10.0;
+    cfg.REWARD.w_I_budget = 2.0;
+    
+    cfg.REWARD.risk_state_thr = 180.0;
+    cfg.REWARD.risk_state_scale = 120.0;
+    
+    cfg.REWARD.risk_com_thr = 0.55;
+    cfg.REWARD.risk_com_scale = 0.30;
+    
+    cfg.REWARD.v_margin_above_req = 0.03;
+    cfg.REWARD.v_excess_scale = 0.08;
+    
+    cfg.REWARD.alpha_state = 0.8;
+    cfg.REWARD.alpha_com = 0.6;
+    cfg.REWARD.alpha_speed_state = 1.5;
 
     cfg.RESET_R_EACH_EPISODE = true;
 

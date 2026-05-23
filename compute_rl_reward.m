@@ -13,29 +13,55 @@ function [reward, info] = compute_rl_reward(window, cfg)
 
     dsoc = max(0, (window.soc_start_pct - window.soc_end_pct) / 100);
 
-    q_pace = max(0, window.window_distance_m) / max(cfg.MISSION.WINDOW_TARGET_M, eps);
     lag_frac = max(0, window.lag_frac);
-
-    pace_shortfall = pos(1 - q_pace);
-    pace_ahead = pos(q_pace - 1);
-
-    pace_reward = ...
-        cfg.REWARD.w_pace * q_pace ...
-        - cfg.REWARD.w_shortfall * pace_shortfall ...
-        + cfg.REWARD.w_ahead * log(1 + pace_ahead);
-
-    lag_penalty = ...
-        cfg.REWARD.w_lag_linear * lag_frac ...
-        + cfg.REWARD.w_lag_quad * lag_frac^2;
 
     soc_frac = window.soc_end_pct / 100;
     soc_stress = pos((cfg.REWARD.soc_safe_thresh - soc_frac) / ...
         max(cfg.REWARD.soc_safe_thresh - cfg.REWARD.soc_terminal_thresh, eps));
-
+    soc_stress = min(max(soc_stress, 0), 1);
+    
+    k_after = max(1, min(cfg.EP_STEPS, round(window.time_frac * cfg.EP_STEPS)));
+    k_before = max(k_after - 1, 0);
+    windows_left_including_current = max(cfg.EP_STEPS - k_before, 1);
+    
+    distance_remaining_at_start = max(cfg.MISSION.D_TARGET_M - window.distance_start_m, 0);
+    dynamic_window_target_m = distance_remaining_at_start / windows_left_including_current;
+    
+    dynamic_window_target_m = max(dynamic_window_target_m, cfg.REWARD.min_window_target_m);
+    
+    effective_window_target_m = ...
+        (1 - soc_stress) * cfg.MISSION.WINDOW_TARGET_M + ...
+        soc_stress * dynamic_window_target_m;
+    
+    q_pace = max(0, window.window_distance_m) / max(effective_window_target_m, eps);
+    
+    pace_shortfall = pos(1 - q_pace);
+    pace_ahead = pos(q_pace - 1);
+    
+    ahead_gain = cfg.REWARD.w_ahead * (1 - 0.75 * soc_stress);
+    
+    pace_reward = ...
+        cfg.REWARD.w_pace * q_pace ...
+        - cfg.REWARD.w_shortfall * pace_shortfall ...
+        + ahead_gain * log(1 + pace_ahead);
+    
+    lag_penalty = ...
+        cfg.REWARD.w_lag_linear * lag_frac ...
+        + cfg.REWARD.w_lag_quad * lag_frac^2;
+    
     soc_penalty_gain = 1 + cfg.REWARD.soc_gate_strength * soc_stress^2;
-
+    
+    I_budget = ...
+        (1 - soc_stress) * cfg.REWARD.I_budget_high + ...
+        soc_stress * cfg.REWARD.I_budget_low;
+    
+    I_budget_excess = capped_pos( ...
+        (window.Ieq_window - I_budget) / cfg.REWARD.I_budget_scale, ...
+        cfg.REWARD.risk_component_cap);
+    
     battery_penalty = soc_penalty_gain * ...
-        (cfg.REWARD.w_I * Ieq_norm + cfg.REWARD.w_dsoc * dsoc);
+        (cfg.REWARD.w_I * Ieq_norm + cfg.REWARD.w_dsoc * dsoc) ...
+        + cfg.REWARD.w_I_budget * I_budget_excess;
 
     slow_pen = pos((cfg.REWARD.v_floor_soft - window.v_exec) / ...
         max(cfg.REWARD.v_floor_soft - cfg.V_MIN, eps));
@@ -64,19 +90,50 @@ function [reward, info] = compute_rl_reward(window, cfg)
         ((-window.dR2) - cfg.REWARD.risk_r2_thr) / cfg.REWARD.risk_r2_scale, ...
         cfg.REWARD.risk_component_cap);
 
+    if isfield(window, 'state_norm_proxy')
+        state_norm_proxy = window.state_norm_proxy;
+    else
+        state_norm_proxy = 0;
+    end
+    
+    if isfield(window, 'com_speed_mag')
+        com_speed_mag = window.com_speed_mag;
+    else
+        com_speed_mag = 0;
+    end
+    
+    risk_state = capped_pos( ...
+        (state_norm_proxy - cfg.REWARD.risk_state_thr) / cfg.REWARD.risk_state_scale, ...
+        cfg.REWARD.risk_component_cap);
+    
+    risk_com = capped_pos( ...
+        (com_speed_mag - cfg.REWARD.risk_com_thr) / cfg.REWARD.risk_com_scale, ...
+        cfg.REWARD.risk_component_cap);
+    
+    required_v_now = dynamic_window_target_m / max(cfg.CHUNK_DURATION * cfg.APPLY_EVERY, eps);
+    
+    risk_excess_speed = capped_pos( ...
+        (window.v_exec - required_v_now - cfg.REWARD.v_margin_above_req) / cfg.REWARD.v_excess_scale, ...
+        cfg.REWARD.risk_component_cap);
+    
+    risk_speed_state = risk_excess_speed * (risk_state + 0.5 * risk_com);
+
     dyn_gate = clamp01((window.v_exec - cfg.REWARD.dynamic_gate_v_thr) / ...
         max(cfg.REWARD.dynamic_gate_v_scale, eps));
 
     risk_static = ...
         cfg.REWARD.alpha_I * risk_I + ...
         cfg.REWARD.alpha_track * risk_track + ...
-        cfg.REWARD.alpha_a * risk_a;
-
+        cfg.REWARD.alpha_a * risk_a + ...
+        cfg.REWARD.alpha_state * risk_state + ...
+        cfg.REWARD.alpha_com * risk_com;
+    
     risk_transition = dyn_gate * ( ...
         cfg.REWARD.alpha_dv * risk_dv + ...
         cfg.REWARD.alpha_dgv * risk_dgv + ...
-        cfg.REWARD.alpha_r2 * risk_r2);
-
+        cfg.REWARD.alpha_r2 * risk_r2 + ...
+        cfg.REWARD.alpha_speed_state * risk_speed_state);
+    
     risk_score = risk_static + risk_transition;
 
     reward = ...
@@ -148,6 +205,16 @@ function [reward, info] = compute_rl_reward(window, cfg)
 
     info.progress_frac = window.progress_frac;
     info.time_frac = window.time_frac;
+
+    info.dynamic_window_target_m = dynamic_window_target_m;
+    info.effective_window_target_m = effective_window_target_m;
+    info.I_budget = I_budget;
+    info.I_budget_excess = I_budget_excess;
+    info.risk_state = risk_state;
+    info.risk_com = risk_com;
+    info.risk_excess_speed = risk_excess_speed;
+    info.risk_speed_state = risk_speed_state;
+    info.required_v_now = required_v_now;
 end
 
 function y = pos(x)
