@@ -8,7 +8,9 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     lower_abs = S.lower_abs;
     upper_abs = S.upper_abs;
 
-    dR_frac = action(1:3);
+    dR_frac_raw = action(1:3);
+    dR_frac = min(max(dR_frac_raw, -cfg.DR_MAX), cfg.DR_MAX);
+    
     gamma_v_raw = action(4);
     gamma_a = action(5);
     
@@ -172,6 +174,8 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
     window = struct();
     window.feasible = feasible;
+    window.completed_episode = false;
+    window.terminal_reason = '';
 
     if any(valid_idx)
         window.tracking_error_mean = mean(te_all(valid_idx), 'omitnan');
@@ -224,8 +228,40 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     window.dR1 = dR_frac(1);
     window.dR2 = dR_frac(2);
     window.dR3 = dR_frac(3);
+        
+    if exist('simOut', 'var') && isstruct(simOut)
+        if isfield(simOut, 'com_speed_end') && isfinite(simOut.com_speed_end)
+            window.com_speed_mag = simOut.com_speed_end;
+        else
+            window.com_speed_mag = 0;
+        end
     
-    window.completed_episode = feasible && (distance_next >= cfg.MISSION.D_TARGET_M);
+        if isfield(simOut, 'state_norm_end') && isfinite(simOut.state_norm_end)
+            window.state_norm_proxy = simOut.state_norm_end;
+        else
+            window.state_norm_proxy = 0;
+        end
+    
+        if isfield(simOut, 'Tst_end') && isfinite(simOut.Tst_end) && cfg.OBS.NOMINAL_TST > 0
+            window.tst_ratio = simOut.Tst_end / cfg.OBS.NOMINAL_TST;
+        else
+            window.tst_ratio = 1.0;
+        end
+    
+        if isfield(simOut, 'fsm_leg1_end') && isfinite(simOut.fsm_leg1_end)
+            window.fsm_proxy = simOut.fsm_leg1_end - 1;
+        else
+            window.fsm_proxy = 0;
+        end
+    else
+        window.com_speed_mag = 0;
+        window.state_norm_proxy = 0;
+        window.tst_ratio = 1.0;
+        window.fsm_proxy = 0;
+    end
+
+    window.completed_episode = feasible && isfinite(distance_next) && ...
+        (distance_next >= cfg.MISSION.D_TARGET_M);
     
     if ~feasible
         window.terminal_reason = 'infeasible';
@@ -359,6 +395,15 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.battery_penalty = info.battery_penalty;
         decisionRow.soc_stress = info.soc_stress;
         decisionRow.slow_pen = info.slow_pen;
+        decisionRow.dynamic_window_target_m = info.dynamic_window_target_m;
+        decisionRow.effective_window_target_m = info.effective_window_target_m;
+        decisionRow.required_v_now = info.required_v_now;
+        decisionRow.I_budget = info.I_budget;
+        decisionRow.I_budget_excess = info.I_budget_excess;
+        decisionRow.risk_state = info.risk_state;
+        decisionRow.risk_com = info.risk_com;
+        decisionRow.risk_excess_speed = info.risk_excess_speed;
+        decisionRow.risk_speed_state = info.risk_speed_state;
         decisionRow.nt_raw = info.nt_raw;
         decisionRow.nu_raw = info.nu_raw;
         decisionRow.feasible = feasible;
