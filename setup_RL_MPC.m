@@ -18,7 +18,7 @@ function setup_RL_MPC()
     cfg.MISSION_DURATION = 10 * 60;
     cfg.EP_STEPS = cfg.MISSION_DURATION / (cfg.CHUNK_DURATION * cfg.APPLY_EVERY);
     
-    cfg.MISSION.D_TARGET_M = 300;
+    cfg.MISSION.D_TARGET_M = 350;
     cfg.MISSION.WINDOW_TARGET_M = cfg.MISSION.D_TARGET_M / cfg.EP_STEPS;
     
     cfg.V_MIN = 0.3;
