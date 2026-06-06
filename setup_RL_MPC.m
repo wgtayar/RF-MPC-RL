@@ -18,7 +18,7 @@ function setup_RL_MPC()
     cfg.MISSION_DURATION = 10 * 60;
     cfg.EP_STEPS = cfg.MISSION_DURATION / (cfg.CHUNK_DURATION * cfg.APPLY_EVERY);
     
-    cfg.MISSION.D_TARGET_M = 350;
+    cfg.MISSION.D_TARGET_M = 320;
     cfg.MISSION.WINDOW_TARGET_M = cfg.MISSION.D_TARGET_M / cfg.EP_STEPS;
     
     cfg.V_MIN = 0.3;
@@ -80,7 +80,7 @@ function setup_RL_MPC()
 
     cfg.REWARD.w_pace = 8.0;
     cfg.REWARD.w_shortfall = 16.0;
-    cfg.REWARD.w_ahead = 4.0;
+    cfg.REWARD.w_ahead = 1.5;
     
     cfg.REWARD.w_lag_linear = 18.0;
     cfg.REWARD.w_lag_quad = 8.0;
@@ -165,6 +165,27 @@ function setup_RL_MPC()
     cfg.REWARD.alpha_state = 0.8;
     cfg.REWARD.alpha_com = 0.6;
     cfg.REWARD.alpha_speed_state = 1.5;
+
+    cfg.REWARD.ADAPT.enable = true;
+    
+    cfg.REWARD.ADAPT.lag_tolerance = 0.015;
+    cfg.REWARD.ADAPT.schedule_gate_width = 0.060;
+    
+    cfg.REWARD.ADAPT.conserve_above50_weight = 0.25;
+    
+    cfg.REWARD.ADAPT.w_excess_speed = 2.0;
+    cfg.REWARD.ADAPT.v_excess_slack = 0.020;
+    cfg.REWARD.ADAPT.v_excess_scale = 0.080;
+    
+    cfg.REWARD.ADAPT.w_cap_use = 0.50;
+    cfg.REWARD.ADAPT.cap_band = 0.015;
+    
+    cfg.REWARD.ADAPT.w_current_conserve = 1.0;
+    cfg.REWARD.ADAPT.I_conserve_high = 52.0;
+    cfg.REWARD.ADAPT.I_conserve_low = 46.0;
+    cfg.REWARD.ADAPT.I_conserve_scale = 8.0;
+    
+    cfg.REWARD.ADAPT.w_terminal_soc = 60.0;
 
     cfg.RESET_R_EACH_EPISODE = true;
 

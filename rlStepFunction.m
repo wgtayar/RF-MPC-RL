@@ -284,6 +284,30 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     window_time = sum(T_all);
     dsoc = soc_end - soc_start;
 
+    target_crossed_this_window = false;
+    target_cross_frac = NaN;
+    target_cross_time_s = NaN;
+    target_cross_soc_pct = NaN;
+    target_cross_charge_As = NaN;
+    
+    if feasible && logged.distance_m < cfg.MISSION.D_TARGET_M && ...
+            distance_next >= cfg.MISSION.D_TARGET_M && window_distance > 0
+    
+        target_crossed_this_window = true;
+        target_cross_frac = ...
+            (cfg.MISSION.D_TARGET_M - logged.distance_m) / window_distance;
+        target_cross_frac = min(max(target_cross_frac, 0), 1);
+    
+        target_cross_time_s = ...
+            logged.episode_time_total + target_cross_frac * window_time;
+    
+        target_cross_soc_pct = ...
+            soc_start + target_cross_frac * (soc_end - soc_start);
+    
+        target_cross_charge_As = ...
+            logged.episode_charge_total + target_cross_frac * window_charge;
+    end
+
     if exist('simOut', 'var') && isstruct(simOut)
         com_speed_mag = simOut.com_speed_end;
     
@@ -363,6 +387,12 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.window_time_s = window_time;
         decisionRow.Ieq_window_A = Ieq_window;
 
+        decisionRow.target_crossed_this_window = target_crossed_this_window;
+        decisionRow.target_cross_frac = target_cross_frac;
+        decisionRow.target_cross_time_s = target_cross_time_s;
+        decisionRow.target_cross_soc_pct = target_cross_soc_pct;
+        decisionRow.target_cross_charge_As = target_cross_charge_As;
+
         decisionRow.prev_Ieq_window_A = window.prev_Ieq_window;
         decisionRow.delta_v_exec = window.delta_v_exec;
         decisionRow.delta_a_exec = window.delta_a_exec;
@@ -404,6 +434,23 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.risk_com = info.risk_com;
         decisionRow.risk_excess_speed = info.risk_excess_speed;
         decisionRow.risk_speed_state = info.risk_speed_state;
+        
+        decisionRow.schedule_balance = info.schedule_balance;
+        decisionRow.schedule_gate = info.schedule_gate;
+        decisionRow.conservation_gate = info.conservation_gate;
+        
+        decisionRow.effective_v_cap = info.effective_v_cap;
+        decisionRow.excess_speed_adapt = info.excess_speed_adapt;
+        decisionRow.cap_use_adapt = info.cap_use_adapt;
+        decisionRow.I_conserve_budget = info.I_conserve_budget;
+        decisionRow.I_conserve_excess = info.I_conserve_excess;
+        
+        decisionRow.adaptive_conservation_penalty = info.adaptive_conservation_penalty;
+        decisionRow.adaptive_excess_speed_penalty = info.adaptive_excess_speed_penalty;
+        decisionRow.adaptive_cap_penalty = info.adaptive_cap_penalty;
+        decisionRow.adaptive_current_penalty = info.adaptive_current_penalty;
+        decisionRow.adaptive_terminal_soc_bonus = info.adaptive_terminal_soc_bonus;
+        
         decisionRow.nt_raw = info.nt_raw;
         decisionRow.nu_raw = info.nu_raw;
         decisionRow.feasible = feasible;
