@@ -140,6 +140,7 @@ function [reward, info] = compute_rl_reward(window, cfg)
     adaptive_excess_speed_penalty = 0;
     adaptive_cap_penalty = 0;
     adaptive_current_penalty = 0;
+    adaptive_efficiency_reward = 0;
     adaptive_terminal_soc_bonus = 0;
     schedule_balance = window.progress_frac - window.time_frac;
     schedule_gate = 0;
@@ -148,6 +149,7 @@ function [reward, info] = compute_rl_reward(window, cfg)
     cap_use_adapt = 0;
     I_conserve_budget = NaN;
     I_conserve_excess = 0;
+    I_conserve_margin = 0;
     effective_v_cap = cfg.V_MIN + cfg.GAMMA_V_MAX * (cfg.V_MAX - cfg.V_MIN);
     
     if isfield(cfg.REWARD, 'ADAPT') && cfg.REWARD.ADAPT.enable
@@ -179,7 +181,15 @@ function [reward, info] = compute_rl_reward(window, cfg)
             (window.Ieq_window - I_conserve_budget) / ...
             max(cfg.REWARD.ADAPT.I_conserve_scale, eps), ...
             cfg.REWARD.risk_component_cap);
-    
+        
+        I_conserve_margin = capped_pos( ...
+            (I_conserve_budget - window.Ieq_window) / ...
+            max(cfg.REWARD.ADAPT.I_conserve_scale, eps), ...
+            cfg.REWARD.risk_component_cap);
+        
+        adaptive_efficiency_reward = ...
+            cfg.REWARD.ADAPT.w_efficiency_bonus * conservation_gate * I_conserve_margin;
+        
         adaptive_excess_speed_penalty = ...
             cfg.REWARD.ADAPT.w_excess_speed * conservation_gate * excess_speed_adapt^2;
     
@@ -200,24 +210,18 @@ function [reward, info] = compute_rl_reward(window, cfg)
         - lag_penalty ...
         - cfg.REWARD.w_risk * risk_score ...
         - battery_penalty ...
+        + adaptive_efficiency_reward ...
         - adaptive_conservation_penalty ...
         - cfg.REWARD.w_track * nt ...
         - cfg.REWARD.w_effort * nu ...
         - cfg.REWARD.w_slow * slow_pen;
 
     if strcmp(window.terminal_reason, 'mission_complete')
-        if isfield(cfg.REWARD, 'ADAPT') && cfg.REWARD.ADAPT.enable
-            adaptive_terminal_soc_bonus = ...
-                cfg.REWARD.ADAPT.w_terminal_soc * window.battery.margin_norm;
-        else
-            adaptive_terminal_soc_bonus = 0;
-        end
+        adaptive_terminal_soc_bonus = 0;
     
         reward = reward ...
             + cfg.REWARD.complete_bonus ...
-            + cfg.REWARD.early_bonus * (1 - window.time_frac) ...
-            + cfg.REWARD.final_soc_bonus * window.battery.margin_norm ...
-            + adaptive_terminal_soc_bonus;
+            + cfg.REWARD.early_bonus * (1 - window.time_frac);
 
     elseif strcmp(window.terminal_reason, 'infeasible')
         reward = reward ...
@@ -293,6 +297,9 @@ function [reward, info] = compute_rl_reward(window, cfg)
     info.cap_use_adapt = cap_use_adapt;
     info.I_conserve_budget = I_conserve_budget;
     info.I_conserve_excess = I_conserve_excess;
+
+    info.I_conserve_margin = I_conserve_margin;
+    info.adaptive_efficiency_reward = adaptive_efficiency_reward;
     
     info.adaptive_conservation_penalty = adaptive_conservation_penalty;
     info.adaptive_excess_speed_penalty = adaptive_excess_speed_penalty;

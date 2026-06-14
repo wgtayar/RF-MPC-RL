@@ -354,6 +354,23 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.timestamp = datestr(now, 'yyyy-mm-dd HH:MM:SS');
         decisionRow.episode_idx = logged.episode_idx;
         decisionRow.decision_idx = decision_idx;
+
+        if isfield(cfg, 'EXPERIMENT') && isfield(cfg.EXPERIMENT, 'id')
+            decisionRow.experiment_id = string(cfg.EXPERIMENT.id);
+        else
+            decisionRow.experiment_id = "";
+        end
+        
+        if isfield(cfg, 'REWARD') && isfield(cfg.REWARD, 'version')
+            decisionRow.reward_version = string(cfg.REWARD.version);
+        else
+            decisionRow.reward_version = "";
+        end
+        
+        decisionRow.gamma_v_max_cfg = cfg.GAMMA_V_MAX;
+        decisionRow.v_exec_cap_cfg = cfg.V_MIN + cfg.GAMMA_V_MAX * (cfg.V_MAX - cfg.V_MIN);
+        decisionRow.mission_target_cfg_m = cfg.MISSION.D_TARGET_M;
+        decisionRow.battery_parallel_cfg = cfg.BATTERY.n_parallel;
         decisionRow.progress_frac = progress_next;
         decisionRow.time_frac = time_frac_next;
         decisionRow.lag_frac = lag_frac_next;
@@ -444,6 +461,9 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.cap_use_adapt = info.cap_use_adapt;
         decisionRow.I_conserve_budget = info.I_conserve_budget;
         decisionRow.I_conserve_excess = info.I_conserve_excess;
+
+        decisionRow.I_conserve_margin = info.I_conserve_margin;
+        decisionRow.adaptive_efficiency_reward = info.adaptive_efficiency_reward;
         
         decisionRow.adaptive_conservation_penalty = info.adaptive_conservation_penalty;
         decisionRow.adaptive_excess_speed_penalty = info.adaptive_excess_speed_penalty;
