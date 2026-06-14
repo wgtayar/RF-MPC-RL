@@ -33,7 +33,7 @@ function setup_RL_MPC()
 
     cfg.DR_MAX = 0.002; % was 0.25 then 0.15
     cfg.GAMMA_V_MIN = 0.0; % 0.5
-    cfg.GAMMA_V_MAX = 0.4; % 1.0
+    cfg.GAMMA_V_MAX = 0.5; % 1.0
     cfg.GAMMA_A_MIN = 0.1; % 0.5
     cfg.GAMMA_A_MAX = 0.5; % 1.0
 
@@ -167,25 +167,28 @@ function setup_RL_MPC()
     cfg.REWARD.alpha_speed_state = 1.5;
 
     cfg.REWARD.ADAPT.enable = true;
-    
+
     cfg.REWARD.ADAPT.lag_tolerance = 0.015;
     cfg.REWARD.ADAPT.schedule_gate_width = 0.060;
     
     cfg.REWARD.ADAPT.conserve_above50_weight = 0.25;
     
-    cfg.REWARD.ADAPT.w_excess_speed = 2.0;
+    cfg.REWARD.ADAPT.w_excess_speed = 0.8;
     cfg.REWARD.ADAPT.v_excess_slack = 0.020;
     cfg.REWARD.ADAPT.v_excess_scale = 0.080;
     
-    cfg.REWARD.ADAPT.w_cap_use = 0.50;
+    cfg.REWARD.ADAPT.w_cap_use = 0.15;
     cfg.REWARD.ADAPT.cap_band = 0.015;
     
-    cfg.REWARD.ADAPT.w_current_conserve = 1.0;
+    cfg.REWARD.ADAPT.w_current_conserve = 0.0;
+    
     cfg.REWARD.ADAPT.I_conserve_high = 52.0;
     cfg.REWARD.ADAPT.I_conserve_low = 46.0;
     cfg.REWARD.ADAPT.I_conserve_scale = 8.0;
     
-    cfg.REWARD.ADAPT.w_terminal_soc = 60.0;
+    cfg.REWARD.ADAPT.w_efficiency_bonus = 3.0;
+    
+    cfg.REWARD.ADAPT.w_terminal_soc = 0.0;
 
     cfg.RESET_R_EACH_EPISODE = true;
 
