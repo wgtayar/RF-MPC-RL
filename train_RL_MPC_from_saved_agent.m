@@ -59,10 +59,23 @@ function train_RL_MPC_from_saved_agent(savedAgentPath)
     cfg.RUN.decision_csv = fullfile(runDir, ['rl_decisions_' runStamp '.csv']);
     cfg.RUN.failure_csv = fullfile(runDir, ['rl_failures_' runStamp '.csv']);
     cfg.RUN.saved_agents_dir = savedAgentsDir;
-
     sourceAgentFile = savedAgentPath;
     save(fullfile(runDir, 'warmstart_source_agent.mat'), 'sourceAgentFile');
-
+    
+    cfg.RUN.experiment_id = "";
+    cfg.RUN.reward_version = "";
+    
+    if isfield(cfg, 'EXPERIMENT') && isfield(cfg.EXPERIMENT, 'id')
+        cfg.RUN.experiment_id = cfg.EXPERIMENT.id;
+    end
+    
+    if isfield(cfg, 'REWARD') && isfield(cfg.REWARD, 'version')
+        cfg.RUN.reward_version = cfg.REWARD.version;
+    end
+    
+    save(fullfile(runDir, ['cfg_snapshot_' runStamp '.mat']), 'cfg');
+    write_run_manifest(fullfile(runDir, ['run_manifest_' runStamp '.txt']), cfg, 'warmstart', savedAgentPath);
+    
     save(cfgPath, 'cfg', 'agent', '-append');
 
     clear rlResetFunction rlStepFunction
