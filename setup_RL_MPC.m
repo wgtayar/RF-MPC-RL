@@ -78,8 +78,8 @@ function setup_RL_MPC()
     cfg.OBS.STATE_NORM_MAX = 150.0;
     cfg.OBS.NOMINAL_TST = p.Tst;
 
-    cfg.REWARD.w_pace = 8.0;
-    cfg.REWARD.w_shortfall = 16.0;
+    cfg.REWARD.w_pace = 10.0;
+    cfg.REWARD.w_shortfall = 30.0;
     cfg.REWARD.w_ahead = 1.5;
     
     cfg.REWARD.w_lag_linear = 18.0;
@@ -132,9 +132,9 @@ function setup_RL_MPC()
     cfg.REWARD.alpha_dgv = 1.2;
     cfg.REWARD.alpha_r2 = 0.8;
     
-    cfg.REWARD.complete_bonus = 160;
+    cfg.REWARD.complete_bonus = 240; %160
     cfg.REWARD.early_bonus = 80;
-    cfg.REWARD.final_soc_bonus = 30;
+    cfg.REWARD.final_soc_bonus = 0; %30
     
     cfg.REWARD.infeasible_base = 70;
     cfg.REWARD.infeasible_remaining = 120;
@@ -164,7 +164,7 @@ function setup_RL_MPC()
     
     cfg.REWARD.alpha_state = 0.8;
     cfg.REWARD.alpha_com = 0.6;
-    cfg.REWARD.alpha_speed_state = 1.5;
+    cfg.REWARD.alpha_speed_state = 0.8; %1.5
 
     cfg.REWARD.ADAPT.enable = true;
 
@@ -173,11 +173,11 @@ function setup_RL_MPC()
     
     cfg.REWARD.ADAPT.conserve_above50_weight = 0.25;
     
-    cfg.REWARD.ADAPT.w_excess_speed = 0.8;
+    cfg.REWARD.ADAPT.w_excess_speed = 0.35; %0.8
     cfg.REWARD.ADAPT.v_excess_slack = 0.020;
     cfg.REWARD.ADAPT.v_excess_scale = 0.080;
     
-    cfg.REWARD.ADAPT.w_cap_use = 0.15;
+    cfg.REWARD.ADAPT.w_cap_use = 0.05; %0.15
     cfg.REWARD.ADAPT.cap_band = 0.015;
     
     cfg.REWARD.ADAPT.w_current_conserve = 0.0;
@@ -185,6 +185,11 @@ function setup_RL_MPC()
     cfg.REWARD.ADAPT.I_conserve_high = 52.0;
     cfg.REWARD.ADAPT.I_conserve_low = 46.0;
     cfg.REWARD.ADAPT.I_conserve_scale = 8.0;
+
+    cfg.REWARD.behind_lag_free = 0.01;
+    cfg.REWARD.behind_lag_width = 0.06;
+    cfg.REWARD.v_shortfall_scale = 0.08;
+    cfg.REWARD.w_v_shortfall = 8.0;
     
     cfg.REWARD.ADAPT.w_efficiency_bonus = 3.0;
     
