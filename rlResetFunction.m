@@ -55,9 +55,19 @@ function [initialObs, logged] = rlResetFunction()
     logged.last_R = last_R;
     logged.v_req = v_req;
     logged.a_req = a_req;
-    logged.v_exec = v_req;
     logged.a_exec = a_req;
-    logged.prev_gamma_v = cfg.GAMMA_V_MISSION;
+
+    gamma_v0 = cfg.GAMMA_V_MISSION;
+
+    if isfield(cfg, 'START_HIGH') && cfg.START_HIGH.enable
+        gamma_v0 = min(max(cfg.START_HIGH.gamma_v_init, cfg.GAMMA_V_MIN), cfg.GAMMA_V_MAX);
+    end
+    
+    v_exec0 = cfg.V_MIN + gamma_v0 * (cfg.V_MAX - cfg.V_MIN);
+    
+    logged.v_exec = v_exec0;
+    logged.prev_gamma_v = gamma_v0;
+
     logged.prev_gamma_a = cfg.GAMMA_A_MIN;
     logged.prev_Ieq_window = 0;
     logged.distance_m = 0;
@@ -68,10 +78,10 @@ function [initialObs, logged] = rlResetFunction()
 
     initialObs = build_rl_observation( ...
         0, 0, battery, 0, 0, ...
-        v_req, a_req, cfg.MISSION.D_TARGET_M / cfg.MISSION_DURATION, a_req, ...
+        v_req, a_req, v_exec0, a_req, ...
         last_R, lower_abs, upper_abs, cfg, ...
         0, 1, 0, 0, ...
-        cfg.GAMMA_V_MISSION, cfg.GAMMA_A_MIN, 0); % CoM speed = 0, stance ratio = 1, state norm proxy = 0, FSM proxy = 0
+        gamma_v0, cfg.GAMMA_A_MIN, 0); % CoM speed = 0, stance ratio = 1, state norm proxy = 0, FSM proxy = 0
 
     if isfield(cfg, 'LOG') && cfg.LOG.enable && cfg.LOG.print_episode
         fprintf('\n[EP %d START] horizon=%.0f s, decisions=%d, chunks/decision=%d, SOC0=%.2f%%, v_req=%.3f, a_req=%.3f\n', ...
