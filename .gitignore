@@ -1,0 +1,19 @@
+# MATLAB autosave files
+*.asv
+
+# Runtime / simulation state
+/LastR.mat
+/SimSnapshot.mat
+/SimSnapshot_RL.mat
+/rlEnv_MPC_R.mat
+
+# Trained final agents generated at repository root
+/final_RL_agent.mat
+/final_RL_agent_warmstart.mat
+
+# RL experiment outputs
+/RL Midtraining Logs/*
+!/RL Midtraining Logs/Placeholder.m
+
+# Generated root simulation movie
+/test.mp4
