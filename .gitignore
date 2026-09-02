@@ -17,3 +17,6 @@
 
 # Generated root simulation movie
 /test.mp4
+
+# MPC feasibility / boundary sweep outputs
+/MPC Boundaries Exploration/
