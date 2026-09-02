@@ -15,7 +15,7 @@ function train_RL_MPC_from_saved_agent(savedAgentPath, maxEpisodes, noiseVarianc
 
     if nargin < 1 || isempty(savedAgentPath)
         savedAgentPath = fullfile(rootDir, 'RL Midtraining Logs', ...
-            'Sucessful Agents', 'run_2026-07-03_05-38-23', 'Agent74.mat');
+            'Successful Agents', 'run_2026-07-03_05-38-23', 'Agent74.mat');
     end
 
     if nargin < 2 || isempty(maxEpisodes)
