@@ -12,7 +12,7 @@ function Results = static_sweep_stance(sweepCfg)
         mkdir(logsRoot);
     end
 
-    runStamp = datestr(now, 'yyyy-mm-dd_HH-MM-SS');
+    runStamp = char(datetime('now', 'Format', 'yyyy-MM-dd_HH-mm-ss-SSS'));
     runDir = fullfile(logsRoot, ['run_' runStamp '_stance']);
     if ~exist(runDir, 'dir')
         mkdir(runDir);
@@ -233,7 +233,7 @@ function rlCfg = build_fallback_rl_cfg(rootDir)
     rlCfg.BATTERY.DoD = 0.8;
     rlCfg.BATTERY.use_pack_sizing = false;
     rlCfg.BATTERY.n_series = 4;
-    rlCfg.BATTERY.n_parallel = 4;
+    rlCfg.BATTERY.n_parallel = 6;
     rlCfg.BATTERY.decim = 10;
     rlCfg.BATTERY.make_plots = false;
 
@@ -280,6 +280,8 @@ function [gridTable, meta] = build_static_stance_grid(sweepCfg)
 end
 
 function caseResult = simulate_static_stance_case(Tst_cmd, vCmd, aCmd, sweepCfg)
+    reset_mpc_case_state();
+
     gait = sweepCfg.gait;
     rlCfg = sweepCfg.rlCfg;
 
@@ -389,9 +391,6 @@ function caseResult = simulate_static_stance_case(Tst_cmd, vCmd, aCmd, sweepCfg)
 
     try
         for ii = 1:maxIter
-            Xt_before = Xt;
-            Ut_before = Ut;
-
             t_hor = tstart + p.Tmpc * (0:p.predHorizon-1);
 
             if gait == 1
@@ -414,26 +413,34 @@ function caseResult = simulate_static_stance_case(Tst_cmd, vCmd, aCmd, sweepCfg)
                 end
             end
 
-            [H, g, Aineq, bineq, Aeq, beq] = fcn_get_QP_form_eta(Xt, Ut, Xd, Ud, p);
+            XtQp = Xt;
+            UtQp = Ut;
+            [H, g, Aineq, bineq, Aeq, beq] = ...
+                fcn_get_QP_form_eta(XtQp, UtQp, Xd, Ud, p);
             H = (H + H') / 2;
 
             qpDiag = compute_qp_diag(H, g, Aineq, bineq, Aeq, beq);
 
-            [zval, ~, exitflag] = quadprog(H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
+            [zval, ~, exitflag, qpOutput] = quadprog( ...
+                H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
             qp_exitflag(ii) = exitflag;
 
             if exitflag <= 0 || isempty(zval)
                 caseResult.feasible = false;
-                caseResult.fail_reason = 'quadprog';
+                caseResult.fail_reason = 'quadprog_solver_failure';
                 caseResult.fail_iter = ii;
                 caseResult.fail_time_s = tstart;
                 caseResult.quadprog_exitflag = exitflag;
-                caseResult.root_cause_inference = 'absolute_Tst_v_a_combination_infeasible_from_nominal_reset';
+                caseResult.root_cause_inference = ...
+                    'solver_failure_not_proof_of_mathematical_infeasibility';
 
                 failSnapshot = build_fail_snapshot( ...
-                    ii, tstart, Xt_before, Ut_before, Xd, Ud, FSM, ...
+                    ii, tstart, XtQp, UtQp, Xd, Ud, FSM, ...
                     H, g, Aineq, bineq, Aeq, beq, qpDiag, ...
-                    Tst_log, Tsw_log, ii, sweepCfg, 'quadprog', '');
+                    Tst_log, Tsw_log, ii, sweepCfg, ...
+                    'quadprog_solver_failure', qpOutput.message);
+                failSnapshot.quadprog_exitflag = exitflag;
+                failSnapshot.quadprog_output = qpOutput;
                 break
             end
 
@@ -465,7 +472,7 @@ function caseResult = simulate_static_stance_case(Tst_cmd, vCmd, aCmd, sweepCfg)
                 caseResult.root_cause_inference = 'absolute_Tst_v_a_combination_causes_state_divergence_from_nominal_reset';
 
                 failSnapshot = build_fail_snapshot( ...
-                    ii, tend, Xt, Ut, Xd, Ud, FSM, ...
+                    ii, tend, XtQp, UtQp, Xd, Ud, FSM, ...
                     H, g, Aineq, bineq, Aeq, beq, qpDiag, ...
                     Tst_log, Tsw_log, ii, sweepCfg, 'state_invalid', '');
                 failSnapshot.Xt_after_invalid = Xt_after;
@@ -515,8 +522,8 @@ function caseResult = simulate_static_stance_case(Tst_cmd, vCmd, aCmd, sweepCfg)
                 end
 
                 if sweepCfg.save_full_qp_each_iter
-                    iterLog(ii).Xt = Xt;
-                    iterLog(ii).Ut = Ut;
+                    iterLog(ii).Xt = XtQp;
+                    iterLog(ii).Ut = UtQp;
                     iterLog(ii).Xd1 = Xd(:,1);
                     iterLog(ii).Ud1 = Ud(:,1);
                     iterLog(ii).H = H;
@@ -1159,6 +1166,8 @@ function s = empty_fail_snapshot()
         'Xd1', [], ...
         'Ud1', [], ...
         'FSM', [], ...
+        'quadprog_exitflag', NaN, ...
+        'quadprog_output', struct(), ...
         'H', [], ...
         'g', [], ...
         'Aineq', [], ...
@@ -1219,12 +1228,6 @@ function m = safe_mean(x)
         m = NaN;
     else
         m = mean(x);
-    end
-end
-
-function add_if_exists(folderPath)
-    if exist(folderPath, 'dir')
-        addpath(folderPath);
     end
 end
 

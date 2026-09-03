@@ -6,13 +6,19 @@ function Results = transition_sweep(cfg)
     end
 
     cfg = fill_transition_defaults(cfg, rootDir);
+    if cfg.run_adaptive
+        error('transition_sweep:AdaptiveHiddenStateUnsupported', [ ...
+            'Adaptive expansion is disabled because the node registry stores ', ...
+            'only (rhoR,v,a), not the path-dependent Xt, Ut, and hidden FSM ', ...
+            'state required to replay a multi-depth transition causally.']);
+    end
 
     logsRoot = fullfile(rootDir, 'MPC Boundaries Exploration');
     if ~exist(logsRoot, 'dir')
         mkdir(logsRoot);
     end
 
-    runStamp = datestr(now, 'yyyy-mm-dd_HH-MM-SS');
+    runStamp = char(datetime('now', 'Format', 'yyyy-MM-dd_HH-mm-ss-SSS'));
     runDir = fullfile(logsRoot, ['transition_run_' runStamp]);
     if ~exist(runDir, 'dir')
         mkdir(runDir);
@@ -36,7 +42,10 @@ function Results = transition_sweep(cfg)
     log_msg(fid, cfg, sprintf('save_iteration_logs = %d', cfg.save_iteration_logs));
     log_msg(fid, cfg, sprintf('save_full_qp_on_failure = %d', cfg.save_full_qp_on_failure));
     log_msg(fid, cfg, sprintf('autosave_every = %d', cfg.autosave_every));
-    log_msg(fid, cfg, 'Stage definitions: S = static seed, T = one-step reachable, M = multi-step reachable, U = unreachable, P = usable-feasible, Q = solver-feasible but poor-quality, I = infeasible.');
+    log_msg(fid, cfg, ['Stage definitions: S = static seed, T = one-step solver-reachable, ', ...
+        'M = multi-step reachable (disabled pending hidden-state support), U = untested/unreachable, ', ...
+        'P = usable solver-feasible, Q = solver-feasible but poor-quality, ', ...
+        'I = default-solver failure or invalid state (not proof of mathematical infeasibility).']);
 
     staticInfo = load_static_case_table(cfg);
     seedTable = build_seed_table(staticInfo.caseTable, cfg);
@@ -391,6 +400,7 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
 
     for i = 1:nSeeds
         src = sourceResults(i);
+        srcPoint = row_to_point(seedTable(i,:));
 
         for j = 1:nSeeds
             edgeIdx = edgeIdx + 1;
@@ -428,7 +438,15 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
                         edgeIdx, nEdges, rec.source_node_id, rec.target_node_id));
                 end
 
-                dstRun = run_mpc_chunk(dstPoint, cfg, src.terminal_ctx);
+                % Replay immediately before every destination so persistent
+                % FSM state cannot leak from a previously tested edge.
+                edgeSourceRun = run_mpc_chunk(srcPoint, cfg, []);
+                if ~edgeSourceRun.solver_feasible
+                    error('transition_sweep:SourceReplayMismatch', ...
+                        'Source node %d failed during deterministic edge replay.', ...
+                        rec.source_node_id);
+                end
+                dstRun = run_mpc_chunk(dstPoint, cfg, edgeSourceRun.terminal_ctx);
 
                 rec.solver_feasible = dstRun.solver_feasible;
                 rec.usable_feasible = dstRun.usable_feasible;
@@ -446,6 +464,10 @@ function out = run_pairwise_stage(seedTable, staticTable, nodeRegistry, cfg, fid
                 rec.fail_state_norm = dstRun.fail_state_norm;
                 rec.fail_input_norm = dstRun.fail_input_norm;
                 rec.fail_com_speed = dstRun.fail_com_speed;
+                rec.xt_continuity_error = norm( ...
+                    dstRun.Xt_start - edgeSourceRun.Xt_end);
+                rec.ut_continuity_error = norm( ...
+                    dstRun.Ut_start - edgeSourceRun.Ut_end);
 
                 solverMat(i,j) = double(rec.solver_feasible);
                 usableMat(i,j) = double(rec.usable_feasible);
@@ -607,7 +629,15 @@ function out = run_frontier_stage(nodeRegistry, staticTable, pairwiseSourceResul
             rec.target_static_solver = dstStatic.static_solver;
             rec.target_static_usable = dstStatic.static_usable;
 
-            dstRun = run_mpc_chunk(dstPoint, cfg, src.terminal_ctx);
+            % As in pairwise testing, replay each source immediately before
+            % its destination to preserve the hidden FSM phase causally.
+            edgeSourceRun = run_mpc_chunk(srcPoint, cfg, []);
+            if ~edgeSourceRun.solver_feasible
+                error('transition_sweep:SourceReplayMismatch', ...
+                    'Frontier source node %d failed during deterministic replay.', ...
+                    rec.source_node_id);
+            end
+            dstRun = run_mpc_chunk(dstPoint, cfg, edgeSourceRun.terminal_ctx);
 
             rec.solver_feasible = dstRun.solver_feasible;
             rec.usable_feasible = dstRun.usable_feasible;
@@ -625,6 +655,10 @@ function out = run_frontier_stage(nodeRegistry, staticTable, pairwiseSourceResul
             rec.fail_state_norm = dstRun.fail_state_norm;
             rec.fail_input_norm = dstRun.fail_input_norm;
             rec.fail_com_speed = dstRun.fail_com_speed;
+            rec.xt_continuity_error = norm( ...
+                dstRun.Xt_start - edgeSourceRun.Xt_end);
+            rec.ut_continuity_error = norm( ...
+                dstRun.Ut_start - edgeSourceRun.Ut_end);
 
             if dstRun.solver_feasible
                 newNodeRegistry = update_node_registry(newNodeRegistry, dstPoint, 1, dstRun.usable_feasible);
@@ -886,6 +920,8 @@ function run = run_mpc_chunk(point, cfg, initCtx)
         end
         tstart = 0;
         batteryInit = make_battery_init(rlCfg);
+        currentTimeHistory = [];
+        currentTotalHistory = [];
         if cfg.compute_current_battery
             kneeTpl = load_knee_template(rlCfg.PROXY.kneeCsv, rlCfg.PROXY.betaMc);
             Dmc = readmatrix(rlCfg.PROXY.kneeCsv);
@@ -904,6 +940,8 @@ function run = run_mpc_chunk(point, cfg, initCtx)
         Ut = initCtx.Ut;
         tstart = initCtx.t_abs_end;
         batteryInit = initCtx.battery;
+        currentTimeHistory = initCtx.current_time;
+        currentTotalHistory = initCtx.current_total;
         if cfg.compute_current_battery
             kneeTpl = initCtx.kneeTpl;
             kneeParams = initCtx.kneeParams;
@@ -917,6 +955,10 @@ function run = run_mpc_chunk(point, cfg, initCtx)
         end
     end
 
+    XtStart = Xt;
+    UtStart = Ut;
+    tAbsoluteStart = tstart;
+
     tracking_error = nan(maxIter, 1);
     control_effort = nan(maxIter, 1);
     com_speed = nan(maxIter, 1);
@@ -927,13 +969,11 @@ function run = run_mpc_chunk(point, cfg, initCtx)
     if cfg.compute_current_battery
         knee_t = nan(maxIter, 1);
         knee_I4 = nan(maxIter, 1);
-        knee_tau4 = nan(maxIter, 1);
         Tst_log = nan(maxIter, 1);
         Tsw_log = nan(maxIter, 1);
     else
         knee_t = [];
         knee_I4 = [];
-        knee_tau4 = [];
         Tst_log = [];
         Tsw_log = [];
     end
@@ -952,9 +992,6 @@ function run = run_mpc_chunk(point, cfg, initCtx)
 
     try
         for ii = 1:maxIter
-            Xt_before = Xt;
-            Ut_before = Ut;
-
             t_hor = tstart + p.Tmpc * (0:p.predHorizon-1);
 
             if gait == 1
@@ -966,7 +1003,6 @@ function run = run_mpc_chunk(point, cfg, initCtx)
             if cfg.compute_current_battery
                 [kneeState, kneeOut] = knee_proxy_step(tstart, FSM(1), kneeState, kneeTpl, kneeParams);
                 knee_t(ii) = kneeOut.t;
-                knee_tau4(ii) = kneeOut.tau4;
                 knee_I4(ii) = kneeOut.I4;
                 if isfinite(kneeState.Tst)
                     Tst_log(ii) = kneeState.Tst;
@@ -976,22 +1012,29 @@ function run = run_mpc_chunk(point, cfg, initCtx)
                 end
             end
 
-            [H, g, Aineq, bineq, Aeq, beq] = fcn_get_QP_form_eta(Xt, Ut, Xd, Ud, p);
+            XtQp = Xt;
+            UtQp = Ut;
+            [H, g, Aineq, bineq, Aeq, beq] = ...
+                fcn_get_QP_form_eta(XtQp, UtQp, Xd, Ud, p);
             H = (H + H') / 2;
 
             qpDiag = compute_qp_diag(H, g, Aineq, bineq, Aeq, beq);
 
-            [zval, ~, exitflag] = quadprog(H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
+            [zval, ~, exitflag, qpOutput] = quadprog( ...
+                H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
             qp_exitflag(ii) = exitflag;
             quadprog_exitflag_last = exitflag;
 
             if exitflag <= 0 || isempty(zval)
                 solver_feasible = false;
-                fail_reason = 'quadprog';
+                fail_reason = 'quadprog_solver_failure';
                 fail_iter = ii;
                 fail_time_s = tstart;
-                failSnapshot = build_fail_snapshot(ii, tstart, Xt_before, Ut_before, Xd, Ud, FSM, ...
-                    H, g, Aineq, bineq, Aeq, beq, qpDiag, Tst_log, Tsw_log, ii, cfg, 'quadprog', '');
+                failSnapshot = build_fail_snapshot(ii, tstart, XtQp, UtQp, Xd, Ud, FSM, ...
+                    H, g, Aineq, bineq, Aeq, beq, qpDiag, Tst_log, Tsw_log, ii, cfg, ...
+                    'quadprog_solver_failure', qpOutput.message);
+                failSnapshot.quadprog_exitflag = exitflag;
+                failSnapshot.quadprog_output = qpOutput;
                 break
             end
 
@@ -1019,7 +1062,7 @@ function run = run_mpc_chunk(point, cfg, initCtx)
                 fail_reason = 'state_invalid';
                 fail_iter = ii;
                 fail_time_s = tend;
-                failSnapshot = build_fail_snapshot(ii, tend, Xt, Ut, Xd, Ud, FSM, ...
+                failSnapshot = build_fail_snapshot(ii, tend, XtQp, UtQp, Xd, Ud, FSM, ...
                     H, g, Aineq, bineq, Aeq, beq, qpDiag, Tst_log, Tsw_log, ii, cfg, 'state_invalid', '');
                 failSnapshot.Xt_after_invalid = Xt_after;
                 failSnapshot.Xdot_before = Xdot_before;
@@ -1061,7 +1104,10 @@ function run = run_mpc_chunk(point, cfg, initCtx)
     end
 
     if cfg.compute_current_battery
-        [Ieq_A, soc_end_pct, batteryOut, total_I_peak] = postprocess_current_battery(knee_t, knee_I4, knee_tau4, Ihip4, Tst_log, Tsw_log, rlCfg, batteryInit);
+        [Ieq_A, soc_end_pct, batteryOut, total_I_peak, ...
+            currentTimeHistory, currentTotalHistory] = ...
+            postprocess_current_battery(knee_t, knee_I4, Ihip4, rlCfg, ...
+            batteryInit, currentTimeHistory, currentTotalHistory);
     else
         Ieq_A = NaN;
         soc_end_pct = NaN;
@@ -1085,6 +1131,8 @@ function run = run_mpc_chunk(point, cfg, initCtx)
     terminal_ctx.kneeTpl = kneeTpl;
     terminal_ctx.kneeParams = kneeParams;
     terminal_ctx.Ihip4 = Ihip4;
+    terminal_ctx.current_time = currentTimeHistory;
+    terminal_ctx.current_total = currentTotalHistory;
 
     run = struct();
     run.solver_feasible = solver_feasible;
@@ -1106,6 +1154,12 @@ function run = run_mpc_chunk(point, cfg, initCtx)
     run.fail_snapshot = failSnapshot;
     run.terminal_ctx = terminal_ctx;
     run.elapsed_sec = toc(t0);
+    run.Xt_start = XtStart;
+    run.Ut_start = UtStart;
+    run.Xt_end = Xt;
+    run.Ut_end = Ut;
+    run.t_abs_start = tAbsoluteStart;
+    run.t_abs_end = tstart;
 
     function out = ii_if_defined()
         try
@@ -1116,7 +1170,10 @@ function run = run_mpc_chunk(point, cfg, initCtx)
     end
 end
 
-function [Ieq_A, soc_end_pct, batteryOut, total_I_peak] = postprocess_current_battery(knee_t, knee_I4, knee_tau4, Ihip4, Tst_log, Tsw_log, rlCfg, batteryInit)
+function [Ieq_A, soc_end_pct, batteryOut, total_I_peak, ...
+        currentTimeHistory, currentTotalHistory] = ...
+        postprocess_current_battery(knee_t, knee_I4, Ihip4, rlCfg, ...
+        batteryInit, currentTimeHistory, currentTotalHistory)
     Ieq_A = NaN;
     soc_end_pct = NaN;
     total_I_peak = NaN;
@@ -1125,8 +1182,6 @@ function [Ieq_A, soc_end_pct, batteryOut, total_I_peak] = postprocess_current_ba
     validCurrent = isfinite(knee_t) & isfinite(knee_I4);
     tCurrent = knee_t(validCurrent);
     I_knee = knee_I4(validCurrent);
-    tau_knee = knee_tau4(validCurrent); %#ok<NASGU>
-
     if numel(tCurrent) < 2
         return
     end
@@ -1146,7 +1201,15 @@ function [Ieq_A, soc_end_pct, batteryOut, total_I_peak] = postprocess_current_ba
         Ieq_A = charge_total_As / current_duration_s;
     end
 
-    batteryOut = evaluate_battery_feedback(tCurrent, I_total, rlCfg.BATTERY, batteryInit);
+    if ~isempty(currentTimeHistory)
+        keep = tCurrent > currentTimeHistory(end);
+        tCurrent = tCurrent(keep);
+        I_total = I_total(keep);
+    end
+    currentTimeHistory = [currentTimeHistory; tCurrent];
+    currentTotalHistory = [currentTotalHistory; I_total];
+    batteryOut = evaluate_battery_feedback( ...
+        currentTimeHistory, currentTotalHistory, rlCfg.BATTERY, batteryInit);
 
     if isfield(batteryOut, 'soc_pct')
         soc_end_pct = batteryOut.soc_pct;
@@ -1207,7 +1270,9 @@ function rec = empty_transition_record()
         'com_speed_end', NaN, ...
         'fail_state_norm', NaN, ...
         'fail_input_norm', NaN, ...
-        'fail_com_speed', NaN);
+        'fail_com_speed', NaN, ...
+        'xt_continuity_error', NaN, ...
+        'ut_continuity_error', NaN);
 end
 
 function T = transition_records_to_table(recs)
@@ -1251,6 +1316,8 @@ function T = transition_records_to_table(recs)
     fail_state_norm = nan(n,1);
     fail_input_norm = nan(n,1);
     fail_com_speed = nan(n,1);
+    xt_continuity_error = nan(n,1);
+    ut_continuity_error = nan(n,1);
 
     for i = 1:n
         r = recs(i);
@@ -1287,6 +1354,8 @@ function T = transition_records_to_table(recs)
         fail_state_norm(i) = r.fail_state_norm;
         fail_input_norm(i) = r.fail_input_norm;
         fail_com_speed(i) = r.fail_com_speed;
+        xt_continuity_error(i) = r.xt_continuity_error;
+        ut_continuity_error(i) = r.ut_continuity_error;
     end
 
     T = table(stage, depth, source_node_id, target_node_id, source_key, target_key, ...
@@ -1294,7 +1363,8 @@ function T = transition_records_to_table(recs)
         delta_rhoR, delta_v, delta_a, target_static_solver, target_static_usable, ...
         solver_feasible, usable_feasible, success_level, transition_relation, fail_reason, ...
         fail_time_s, fail_iter, quadprog_exitflag, tracking_error_mean, control_effort_mean, ...
-        Ieq_A, soc_end_pct, com_speed_end, fail_state_norm, fail_input_norm, fail_com_speed);
+        Ieq_A, soc_end_pct, com_speed_end, fail_state_norm, fail_input_norm, ...
+        fail_com_speed, xt_continuity_error, ut_continuity_error);
 end
 
 function s = empty_source_rollout()
@@ -1571,15 +1641,9 @@ function candidates = build_candidate_targets(sourceNodes, cfg)
     for i = 1:numel(srcList)
         src = srcList(i);
 
-        if isstruct(src) && isfield(src, 'node_key')
-            rho0 = src.rhoR;
-            v0 = src.v_cmd;
-            a0 = src.a_cmd;
-        else
-            rho0 = src.rhoR;
-            v0 = src.v_cmd;
-            a0 = src.a_cmd;
-        end
+        rho0 = src.rhoR;
+        v0 = src.v_cmd;
+        a0 = src.a_cmd;
 
         for dr = cfg.frontier_drho
             for dv = cfg.frontier_dv
@@ -1683,7 +1747,7 @@ function rlCfg = build_fallback_rl_cfg(rootDir)
     rlCfg.BATTERY.DoD = 0.8;
     rlCfg.BATTERY.use_pack_sizing = false;
     rlCfg.BATTERY.n_series = 4;
-    rlCfg.BATTERY.n_parallel = 4;
+    rlCfg.BATTERY.n_parallel = 6;
     rlCfg.BATTERY.decim = 10;
     rlCfg.BATTERY.make_plots = false;
 
@@ -1843,6 +1907,8 @@ function s = empty_fail_snapshot()
         'Xd1', [], ...
         'Ud1', [], ...
         'FSM', [], ...
+        'quadprog_exitflag', NaN, ...
+        'quadprog_output', struct(), ...
         'H', [], ...
         'g', [], ...
         'Aineq', [], ...
@@ -1895,12 +1961,6 @@ function q = empty_qp_diag()
         'Aeq_fro', NaN, ...
         'bineq_norm', NaN, ...
         'beq_norm', NaN);
-end
-
-function add_if_exists(folderPath)
-    if exist(folderPath, 'dir')
-        addpath(folderPath);
-    end
 end
 
 function log_msg(fid, cfg, msg)
