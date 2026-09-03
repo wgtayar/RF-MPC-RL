@@ -32,46 +32,60 @@ function result = analyze_qp_feasibility(snapshotOrQp)
     scaledAeq = Aeq ./ equalityScale;
     scaledBeq = beq ./ equalityScale;
 
-    objective = [zeros(numberVariables, 1); ones(numberInequalities, 1)];
-    phaseAineq = [scaledAineq, -eye(numberInequalities)];
-    phaseBineq = scaledBineq;
-    phaseAeq = [scaledAeq, zeros(size(Aeq, 1), numberInequalities)];
-    lowerBound = [-inf(numberVariables, 1); zeros(numberInequalities, 1)];
+    equalityParticular = lsqminnorm(scaledAeq, scaledBeq);
+    scaledEqualityResidual = scaledAeq*equalityParticular - scaledBeq;
+    nullBasis = null(scaledAeq);
+    numberFreeVariables = size(nullBasis, 2);
+    objective = [zeros(numberFreeVariables, 1); ones(numberInequalities, 1)];
+    phaseAineq = [scaledAineq*nullBasis, -eye(numberInequalities)];
+    phaseBineq = scaledBineq - scaledAineq*equalityParticular;
+    lowerBound = [-inf(numberFreeVariables, 1); zeros(numberInequalities, 1)];
     options = optimoptions('linprog', 'Display', 'none', ...
-        'Algorithm', 'dual-simplex-highs');
+        'Algorithm', 'dual-simplex-highs', ...
+        'ConstraintTolerance', 1e-10, 'OptimalityTolerance', 1e-10);
 
     [phaseSolution, phaseObjective, phaseExitflag, phaseOutput] = linprog( ...
-        objective, phaseAineq, phaseBineq, phaseAeq, scaledBeq, ...
-        lowerBound, [], options);
+        objective, phaseAineq, phaseBineq, [], [], lowerBound, [], options);
 
     result = struct();
     result.phase1_exitflag = phaseExitflag;
     result.phase1_output = phaseOutput;
-    result.minimum_scaled_inequality_relaxation_l1 = phaseObjective;
-    result.minimum_scaled_equality_residual_l2 = ...
-        norm(scaledAeq*lsqminnorm(scaledAeq, scaledBeq) - scaledBeq);
+    result.phase1_solver_objective = phaseObjective;
+    result.minimum_scaled_equality_residual_l2 = norm(scaledEqualityResidual);
     result.original_quadprog_exitflag = localField(failureQP, 'exitflag', NaN);
 
-    tolerance = 1e-8;
-    if phaseExitflag > 0
-        z = phaseSolution(1:numberVariables);
-        slack = phaseSolution(numberVariables+1:end);
+    equalityTolerance = 1e-8;
+    feasibilityTolerance = 1e-7;
+    if phaseExitflag > 0 && ...
+            result.minimum_scaled_equality_residual_l2 <= equalityTolerance
+        if numberFreeVariables == 0
+            freeSolution = zeros(0, 1);
+        else
+            freeSolution = phaseSolution(1:numberFreeVariables);
+        end
+        z = equalityParticular + nullBasis*freeSolution;
+        slack = phaseSolution(numberFreeVariables+1:end);
         result.phase1_z = z;
         result.inequality_slack_scaled = slack;
+        scaledViolation = max(scaledAineq*z - scaledBineq, 0);
+        result.minimum_scaled_inequality_relaxation_l1 = sum(scaledViolation);
         result.inequality_margin = bineq - Aineq*z;
         result.equality_residual = Aeq*z - beq;
         result.maximum_inequality_violation = ...
             max(max(-result.inequality_margin, 0), [], 'omitnan');
         result.maximum_equality_residual = max(abs(result.equality_residual));
-        offendingRows = find(slack > tolerance);
-        result.offending_inequality_rows = map_qp_inequality_rows(offendingRows);
-        if phaseObjective <= tolerance
+        if max(scaledViolation, [], 'omitnan') <= feasibilityTolerance && ...
+                result.maximum_equality_residual <= feasibilityTolerance
+            result.offending_inequality_rows = map_qp_inequality_rows([]);
             if result.original_quadprog_exitflag <= 0
                 result.classification = 'solver_difficulty_or_objective_numerics';
             else
                 result.classification = 'linearly_feasible';
             end
         else
+            offendingRows = find(scaledViolation > feasibilityTolerance | ...
+                slack > feasibilityTolerance);
+            result.offending_inequality_rows = map_qp_inequality_rows(offendingRows);
             result.classification = 'mathematically_infeasible_linear_constraints';
         end
     else
