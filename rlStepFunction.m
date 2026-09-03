@@ -13,7 +13,8 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     dR_frac = min(max(dR_frac_raw, -cfg.DR_MAX), cfg.DR_MAX);
 
     gamma_v_raw = action(4);
-    gamma_a = action(5);
+    gamma_a_raw = action(5);
+    gamma_a = gamma_a_raw;
 
     decision_idx = logged.step_idx + 1;
 
@@ -45,19 +46,53 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     Q_all = zeros(cfg.APPLY_EVERY, 1);
     T_all = zeros(cfg.APPLY_EVERY, 1);
     DX_all = zeros(cfg.APPLY_EVERY, 1);
+    qp_solve_all = zeros(cfg.APPLY_EVERY, 1);
+    qp_failed_all = zeros(cfg.APPLY_EVERY, 1);
+    qp_margin_min_all = nan(cfg.APPLY_EVERY, 1);
+    qp_active_all = zeros(cfg.APPLY_EVERY, 1);
+    qp_near_active_all = zeros(cfg.APPLY_EVERY, 1);
+    qp_violated_all = zeros(cfg.APPLY_EVERY, 1);
+    qp_eq_norm_all = nan(cfg.APPLY_EVERY, 1);
+    qp_eq_max_all = nan(cfg.APPLY_EVERY, 1);
+    qp_leg_type_margin_all = nan(4, 6, cfg.APPLY_EVERY);
     feasible = true;
     fail_reason = '';
     battery = logged.battery;
 
     for k = 1:cfg.APPLY_EVERY
         battery_before_chunk = battery;
-        simOut = run_MPC_simulation(R_all, 0, v_exec, a_exec, cfg);
+        diagnosticContext = struct();
+        diagnosticContext.episode_idx = logged.episode_idx;
+        diagnosticContext.decision_idx = decision_idx;
+        diagnosticContext.chunk_in_decision = k;
+        diagnosticContext.dR_frac_raw = dR_frac_raw(:).';
+        diagnosticContext.dR_frac_applied = dR_frac(:).';
+        diagnosticContext.gamma_v_raw = gamma_v_raw;
+        diagnosticContext.gamma_v_applied = gamma_v;
+        diagnosticContext.gamma_a_raw = gamma_a_raw;
+        diagnosticContext.gamma_a_applied = gamma_a;
+        diagnosticContext.R_applied = R_new(:).';
+        diagnosticContext.v_exec = v_exec;
+        diagnosticContext.a_exec = a_exec;
+        if isfield(cfg, 'RUN') && isfield(cfg.RUN, 'run_id')
+            diagnosticContext.run_id = cfg.RUN.run_id;
+        end
+        simOut = run_MPC_simulation(R_all, 0, v_exec, a_exec, cfg, diagnosticContext);
 
         te_all(k) = simOut.tracking_error_total;
         ue_all(k) = simOut.control_effort_total;
         Q_all(k) = simOut.charge_total;
         T_all(k) = simOut.current_duration;
         DX_all(k) = simOut.dx_forward;
+        qp_solve_all(k) = simOut.qp_solve_count;
+        qp_failed_all(k) = simOut.qp_failed_count;
+        qp_margin_min_all(k) = simOut.inequality_margin_min;
+        qp_active_all(k) = simOut.active_inequality_count;
+        qp_near_active_all(k) = simOut.near_active_inequality_count;
+        qp_violated_all(k) = simOut.violated_inequality_count;
+        qp_eq_norm_all(k) = simOut.equality_residual_norm_max;
+        qp_eq_max_all(k) = simOut.equality_residual_max_abs;
+        qp_leg_type_margin_all(:,:,k) = simOut.minimum_margin_by_leg_type;
         battery = simOut.battery;
 
         chunk_abs = (decision_idx - 1) * cfg.APPLY_EVERY + k;
@@ -83,6 +118,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
             chunkRow.gamma_v = gamma_v;
             chunkRow.gamma_a = gamma_a;
             chunkRow.gamma_v_raw = gamma_v_raw;
+            chunkRow.gamma_a_raw = gamma_a_raw;
             chunkRow.v_from_gamma = cfg.V_MIN + gamma_v * (cfg.V_MAX - cfg.V_MIN);
             chunkRow.start_high_active = start_high_active;
             chunkRow.gamma_v_floor_active = gamma_v_floor_active;
@@ -141,6 +177,8 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
             chunkRow.tracking_error_total = simOut.tracking_error_total;
             chunkRow.control_effort_total = simOut.control_effort_total;
+
+            chunkRow = localAddSimulationDiagnostics(chunkRow, simOut);
 
             append_csv_row(cfg.RUN.chunk_csv, chunkRow);
         end
@@ -275,6 +313,18 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     window_time = sum(T_all);
     dsoc = soc_end - soc_start;
 
+    diagnosticSummary = simOut;
+    diagnosticSummary.qp_solve_count = sum(qp_solve_all);
+    diagnosticSummary.qp_failed_count = sum(qp_failed_all);
+    diagnosticSummary.inequality_margin_min = min(qp_margin_min_all, [], 'omitnan');
+    diagnosticSummary.active_inequality_count = sum(qp_active_all);
+    diagnosticSummary.near_active_inequality_count = sum(qp_near_active_all);
+    diagnosticSummary.violated_inequality_count = sum(qp_violated_all);
+    diagnosticSummary.equality_residual_norm_max = max(qp_eq_norm_all, [], 'omitnan');
+    diagnosticSummary.equality_residual_max_abs = max(qp_eq_max_all, [], 'omitnan');
+    diagnosticSummary.minimum_margin_by_leg_type = ...
+        min(qp_leg_type_margin_all, [], 3, 'omitnan');
+
     target_crossed_this_window = false;
     target_cross_frac = NaN;
     target_cross_time_s = NaN;
@@ -361,6 +411,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.gamma_v = gamma_v;
         decisionRow.gamma_a = gamma_a;
         decisionRow.gamma_v_raw = gamma_v_raw;
+        decisionRow.gamma_a_raw = gamma_a_raw;
         decisionRow.v_from_gamma = cfg.V_MIN + gamma_v * (cfg.V_MAX - cfg.V_MIN);
         decisionRow.start_high_active = start_high_active;
         decisionRow.gamma_v_floor_active = gamma_v_floor_active;
@@ -445,6 +496,8 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         decisionRow.terminal_reason = string(window.terminal_reason);
         decisionRow.fail_reason = string(fail_reason);
 
+        decisionRow = localAddSimulationDiagnostics(decisionRow, diagnosticSummary);
+
         append_csv_row(cfg.RUN.decision_csv, decisionRow);
 
         if ~feasible
@@ -480,6 +533,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
             checkpoint.gamma_v = gamma_v;
             checkpoint.gamma_a = gamma_a;
             checkpoint.gamma_v_raw = gamma_v_raw;
+            checkpoint.gamma_a_raw = gamma_a_raw;
             checkpoint.R_new = R_new(:).';
             checkpoint.v_req = logged.v_req;
             checkpoint.a_req = logged.a_req;
@@ -524,5 +578,40 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         end
         fprintf('[EP %d END] reason=%s, final_SOC=%.2f%%, total_Q=%.3f A*s, total_time=%.1f s\n\n', ...
             logged.episode_idx, reason, battery.soc_pct, logged.episode_charge_total, logged.episode_time_total);
+    end
+end
+
+function row = localAddSimulationDiagnostics(row, simOut)
+    row.failure_qp_id = string(simOut.failure_qp_id);
+    row.failure_qp_file = string(simOut.failure_qp_file);
+    row.qp_solve_count = simOut.qp_solve_count;
+    row.qp_failed_count = simOut.qp_failed_count;
+    row.inequality_margin_min = simOut.inequality_margin_min;
+    row.active_inequality_count = simOut.active_inequality_count;
+    row.near_active_inequality_count = simOut.near_active_inequality_count;
+    row.violated_inequality_count = simOut.violated_inequality_count;
+    row.equality_residual_norm_max = simOut.equality_residual_norm_max;
+    row.equality_residual_max_abs = simOut.equality_residual_max_abs;
+    row.Tst_commanded = simOut.Tst_commanded;
+    row.Tsw_commanded = simOut.Tsw_commanded;
+
+    for leg = 1:4
+        row.(sprintf('fsm_leg%d_end', leg)) = simOut.fsm_all_end(leg);
+        row.(sprintf('contact_leg%d_end', leg)) = simOut.contact_all_end(leg);
+        row.(sprintf('fail_fsm_leg%d', leg)) = simOut.fail_fsm_all(leg);
+    end
+
+    constraintNames = {'fx_pos','fx_neg','fy_pos','fy_neg','fz_upper','fz_lower'};
+    for leg = 1:4
+        for constraint = 1:6
+            fieldName = sprintf('margin_leg%d_%s_min', leg, constraintNames{constraint});
+            row.(fieldName) = simOut.minimum_margin_by_leg_type(leg, constraint);
+        end
+    end
+
+    componentNames = fieldnames(simOut.state_components);
+    for i = 1:numel(componentNames)
+        fieldName = ['state_' componentNames{i}];
+        row.(fieldName) = simOut.state_components.(componentNames{i});
     end
 end
