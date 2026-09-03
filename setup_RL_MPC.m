@@ -1,9 +1,12 @@
 function setup_RL_MPC()
 
-    rootDir = fileparts(mfilename('fullpath'));
-    addpath(fullfile(rootDir, 'fcns'));
-    addpath(fullfile(rootDir, 'fcns_MPC'));
-    addpath(fullfile(rootDir, 'RL Midtraining Logs'));
+    rootDir = bootstrap_RF_MPC_RL();
+
+    % The setup seed controls network initialization. The trainer reapplies
+    % the same seed before training so setup and rollout randomness are stable.
+    cfg.RNG_SEED = 20260903;
+    cfg.RNG_ALGORITHM = 'twister';
+    rng(cfg.RNG_SEED, cfg.RNG_ALGORITHM);
 
     cfgPath = fullfile(rootDir, 'rlEnv_MPC_R.mat');
 
@@ -231,6 +234,24 @@ function setup_RL_MPC()
 
     cfg.CHECKPOINT.every_decisions = 3;
 
+    cfg.TRAIN.default_max_episodes = 150;
+    cfg.TRAIN.actor_learn_rate = 1e-3;
+    cfg.TRAIN.critic_learn_rate = 1e-3;
+    cfg.TRAIN.gradient_threshold = 1;
+    cfg.TRAIN.discount_factor = 0.99;
+    cfg.TRAIN.target_smooth_factor = 1e-3;
+    cfg.TRAIN.mini_batch_size = 64;
+    cfg.TRAIN.experience_buffer_length = 1e6;
+    cfg.TRAIN.noise_variance = 0.04^2;
+    cfg.TRAIN.noise_decay = 0;
+
+    cfg.DIAGNOSTICS.enable = true;
+    cfg.DIAGNOSTICS.active_margin_tolerance = 1e-7;
+    cfg.DIAGNOSTICS.near_active_margin_tolerance = 1e-5;
+    cfg.DIAGNOSTICS.save_full_qp_on_failure = true;
+    cfg.DIAGNOSTICS.save_fail_state_vectors = true;
+    cfg.DIAGNOSTICS.save_success_snapshots = false;
+
     save(cfgPath, 'lower_abs', 'upper_abs', 'initial_R', 'cfg');
 
     obsInfo = rlNumericSpec([19 1], 'Name', 'observations');
@@ -261,7 +282,8 @@ function setup_RL_MPC()
     actor = rlDeterministicActorRepresentation( ...
         actorLayers, obsInfo, actionInfo, ...
         'Observation', {'obs'}, 'Action', {'action'}, ...
-        rlOptimizerOptions('LearnRate', 1e-3, 'GradientThreshold', 1));
+        rlOptimizerOptions('LearnRate', cfg.TRAIN.actor_learn_rate, ...
+        'GradientThreshold', cfg.TRAIN.gradient_threshold));
 
     statePath = [
         featureInputLayer(19, 'Name', 'obs')
@@ -291,17 +313,18 @@ function setup_RL_MPC()
     critic = rlQValueRepresentation( ...
         criticLG, obsInfo, actionInfo, ...
         'Observation', {'obs'}, 'Action', {'action'}, ...
-        rlOptimizerOptions('LearnRate', 1e-3, 'GradientThreshold', 1));
+        rlOptimizerOptions('LearnRate', cfg.TRAIN.critic_learn_rate, ...
+        'GradientThreshold', cfg.TRAIN.gradient_threshold));
 
     agentOpts = rlDDPGAgentOptions( ...
         'SampleTime', 1, ...
-        'TargetSmoothFactor', 1e-3, ...
-        'DiscountFactor', 0.99, ...
-        'MiniBatchSize', 64, ...
-        'ExperienceBufferLength', 1e6);
+        'TargetSmoothFactor', cfg.TRAIN.target_smooth_factor, ...
+        'DiscountFactor', cfg.TRAIN.discount_factor, ...
+        'MiniBatchSize', cfg.TRAIN.mini_batch_size, ...
+        'ExperienceBufferLength', cfg.TRAIN.experience_buffer_length);
 
-    agentOpts.NoiseOptions.Variance = 0.04^2;
-    agentOpts.NoiseOptions.VarianceDecayRate = 0;
+    agentOpts.NoiseOptions.Variance = cfg.TRAIN.noise_variance;
+    agentOpts.NoiseOptions.VarianceDecayRate = cfg.TRAIN.noise_decay;
 
     agent = rlDDPGAgent(actor, critic, agentOpts);
 

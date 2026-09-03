@@ -1,23 +1,24 @@
 function evaluate_saved_agents_deterministic(agentNumbers, numEpisodes, agentRoot)
 
-    if nargin < 1 || isempty(agentNumbers)
-        agentNumbers = [63 66 70 74 75 83 89 104 112];
-    end
-
     if nargin < 2 || isempty(numEpisodes)
         numEpisodes = 5;
     end
 
-    rootDir = fileparts(mfilename('fullpath'));
-    addpath(rootDir);
-    addpath(fullfile(rootDir, 'fcns'));
-    addpath(fullfile(rootDir, 'fcns_MPC'));
-    addpath(fullfile(rootDir, 'RL Midtraining Logs'));
+    rootDir = bootstrap_RF_MPC_RL();
     rehash;
 
     if nargin < 3 || isempty(agentRoot)
         agentRoot = fullfile(rootDir, 'RL Midtraining Logs', ...
             'Successful Agents', 'run_2026-07-03_05-38-23');
+    end
+
+    if nargin < 1 || isempty(agentNumbers)
+        agentNumbers = localDiscoverAgentNumbers(agentRoot);
+        if isempty(agentNumbers)
+            error('evaluate_saved_agents_deterministic:NoAgents', ...
+                'No Agent<number>.mat files were found under: %s', agentRoot);
+        end
+        fprintf('[AGENT DISCOVERY] Found available agents: %s\n', mat2str(agentNumbers));
     end
 
     if ~exist(agentRoot, 'dir')
@@ -49,7 +50,12 @@ function evaluate_saved_agents_deterministic(agentNumbers, numEpisodes, agentRoo
     end
 
     masterManifest = fullfile(evalRoot, ['eval_manifest_' evalStamp '.txt']);
-    localWriteMasterManifest(masterManifest, cfgBase, agentRoot, agentNumbers, numEpisodes);
+    masterRunInfo = struct('run_id', ['eval_' evalStamp], ...
+        'training_mode', 'deterministic_evaluation_batch', ...
+        'max_episodes', numEpisodes, 'random_seed', cfgBase.RNG_SEED, ...
+        'noise_variance', 0, 'noise_decay', 0, ...
+        'source_agent', agentRoot);
+    write_run_manifest(masterManifest, cfgBase, masterRunInfo);
 
     summaryRows = {};
     summaryNames = { ...
@@ -122,6 +128,10 @@ function evaluate_saved_agents_deterministic(agentNumbers, numEpisodes, agentRoo
         cfg.RUN.chunk_csv = fullfile(agentRunDir, ['rl_chunks_' evalStamp '_' agentLabel '.csv']);
         cfg.RUN.decision_csv = fullfile(agentRunDir, ['rl_decisions_' evalStamp '_' agentLabel '.csv']);
         cfg.RUN.failure_csv = fullfile(agentRunDir, ['rl_failures_' evalStamp '_' agentLabel '.csv']);
+        cfg.RUN.qp_failure_dir = fullfile(agentRunDir, 'qp_failures');
+        if ~exist(cfg.RUN.qp_failure_dir, 'dir')
+            mkdir(cfg.RUN.qp_failure_dir);
+        end
         cfg.RUN.saved_agents_dir = '';
         cfg.RUN.eval_mode = 'deterministic_actor';
         cfg.RUN.source_agent = agentFile;
@@ -145,9 +155,14 @@ function evaluate_saved_agents_deterministic(agentNumbers, numEpisodes, agentRoo
         save(cfgPath, 'env', 'agent', 'lower_abs', 'upper_abs', 'initial_R', 'cfg');
         save(fullfile(agentRunDir, ['cfg_snapshot_' evalStamp '_' agentLabel '.mat']), 'cfg', 'agentFile');
 
-        localWriteAgentManifest( ...
+        agentRunInfo = struct('run_id', cfg.RUN.run_stamp, ...
+            'training_mode', 'deterministic_evaluation', ...
+            'max_episodes', numEpisodes, 'random_seed', cfg.RNG_SEED, ...
+            'noise_variance', 0, 'noise_decay', 0, ...
+            'source_agent', agentFile, 'run_label', agentLabel);
+        write_run_manifest( ...
             fullfile(agentRunDir, ['eval_manifest_' evalStamp '_' agentLabel '.txt']), ...
-            cfg, agentLabel, agentFile, numEpisodes);
+            cfg, agentRunInfo);
 
         clear rlResetFunction rlStepFunction;
 
@@ -216,6 +231,19 @@ function evaluate_saved_agents_deterministic(agentNumbers, numEpisodes, agentRoo
     end
     agent = agentBase;
     save(cfgPath, 'env', 'agent', 'lower_abs', 'upper_abs', 'initial_R', 'cfg');
+end
+
+function agentNumbers = localDiscoverAgentNumbers(agentRoot)
+    files = localListMatFilesRecursive(agentRoot);
+    agentNumbers = [];
+    for i = 1:numel(files)
+        [~, baseName] = fileparts(files{i});
+        token = regexp(baseName, '^Agent(\d+)$', 'tokens', 'once');
+        if ~isempty(token)
+            agentNumbers(end+1) = str2double(token{1}); %#ok<AGROW>
+        end
+    end
+    agentNumbers = unique(agentNumbers, 'sorted');
 end
 
 function agentFile = localResolveAgentFile(agentRoot, agentNum)
@@ -330,7 +358,9 @@ function agent = localForceZeroNoise(agent)
             agent.AgentOptions.NoiseOptions.VarianceDecayRate = 0;
         end
     catch ME
-        warning('Could not explicitly zero agent noise. sim-mode should still be deterministic. Reason: %s', ME.message);
+        warning('evaluate_saved_agents_deterministic:NoiseOverrideFailed', ...
+            ['Could not explicitly zero agent noise. sim-mode should still ', ...
+            'be deterministic. Reason: %s'], ME.message);
     end
 end
 
@@ -556,82 +586,6 @@ function out = localModeNumeric(x)
     end
     [~, idx] = max(counts);
     out = u(idx);
-end
-
-function localWriteMasterManifest(pathOut, cfg, agentRoot, agentNumbers, numEpisodes)
-    fid = fopen(pathOut, 'w');
-    if fid < 0
-        warning('Could not write master eval manifest: %s', pathOut);
-        return
-    end
-    cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
-
-    fprintf(fid, 'eval_mode: deterministic_actor_batch\n');
-    fprintf(fid, 'created_at: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
-    fprintf(fid, 'agent_root: %s\n', agentRoot);
-    fprintf(fid, 'agent_numbers: %s\n', mat2str(agentNumbers));
-    fprintf(fid, 'num_eval_episodes_per_agent: %d\n', numEpisodes);
-    fprintf(fid, 'training_updates: false\n');
-    fprintf(fid, 'exploration_noise: false\n');
-    fprintf(fid, 'mission_target_m: %.10g\n', cfg.MISSION.D_TARGET_M);
-    fprintf(fid, 'mission_duration_s: %.10g\n', cfg.MISSION_DURATION);
-    fprintf(fid, 'episode_steps: %.10g\n', cfg.EP_STEPS);
-    fprintf(fid, 'chunk_duration_s: %.10g\n', cfg.CHUNK_DURATION);
-    fprintf(fid, 'apply_every: %.10g\n', cfg.APPLY_EVERY);
-    fprintf(fid, 'gamma_v_max: %.10g\n', cfg.GAMMA_V_MAX);
-    fprintf(fid, 'v_exec_cap: %.10g\n', cfg.V_MIN + cfg.GAMMA_V_MAX * (cfg.V_MAX - cfg.V_MIN));
-    fprintf(fid, 'dr_max: %.10g\n', cfg.DR_MAX);
-
-    if isfield(cfg, 'EXPERIMENT') && isfield(cfg.EXPERIMENT, 'id')
-        fprintf(fid, 'base_experiment_id: %s\n', cfg.EXPERIMENT.id);
-    end
-
-    if isfield(cfg, 'REWARD') && isfield(cfg.REWARD, 'version')
-        fprintf(fid, 'base_reward_version: %s\n', cfg.REWARD.version);
-    end
-end
-
-function localWriteAgentManifest(pathOut, cfg, agentLabel, agentFile, numEpisodes)
-    fid = fopen(pathOut, 'w');
-    if fid < 0
-        warning('Could not write agent eval manifest: %s', pathOut);
-        return
-    end
-    cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
-
-    fprintf(fid, 'eval_mode: deterministic_actor\n');
-    fprintf(fid, 'created_at: %s\n', datestr(now, 'yyyy-mm-dd HH:MM:SS'));
-    fprintf(fid, 'agent_label: %s\n', agentLabel);
-    fprintf(fid, 'source_agent: %s\n', agentFile);
-    fprintf(fid, 'num_eval_episodes: %d\n', numEpisodes);
-    fprintf(fid, 'training_updates: false\n');
-    fprintf(fid, 'exploration_noise: false\n');
-    fprintf(fid, 'mission_target_m: %.10g\n', cfg.MISSION.D_TARGET_M);
-    fprintf(fid, 'mission_duration_s: %.10g\n', cfg.MISSION_DURATION);
-    fprintf(fid, 'episode_steps: %.10g\n', cfg.EP_STEPS);
-    fprintf(fid, 'chunk_duration_s: %.10g\n', cfg.CHUNK_DURATION);
-    fprintf(fid, 'apply_every: %.10g\n', cfg.APPLY_EVERY);
-    fprintf(fid, 'gamma_v_max: %.10g\n', cfg.GAMMA_V_MAX);
-    fprintf(fid, 'v_exec_cap: %.10g\n', cfg.V_MIN + cfg.GAMMA_V_MAX * (cfg.V_MAX - cfg.V_MIN));
-    fprintf(fid, 'dr_max: %.10g\n', cfg.DR_MAX);
-    fprintf(fid, 'battery_parallel: %.10g\n', cfg.BATTERY.n_parallel);
-    fprintf(fid, 'reward_w_pace: %.10g\n', cfg.REWARD.w_pace);
-    fprintf(fid, 'reward_w_shortfall: %.10g\n', cfg.REWARD.w_shortfall);
-    fprintf(fid, 'reward_w_ahead: %.10g\n', cfg.REWARD.w_ahead);
-    fprintf(fid, 'reward_complete_bonus: %.10g\n', cfg.REWARD.complete_bonus);
-    fprintf(fid, 'reward_early_bonus: %.10g\n', cfg.REWARD.early_bonus);
-    fprintf(fid, 'reward_final_soc_bonus: %.10g\n', cfg.REWARD.final_soc_bonus);
-    fprintf(fid, 'alpha_state: %.10g\n', cfg.REWARD.alpha_state);
-    fprintf(fid, 'alpha_speed_state: %.10g\n', cfg.REWARD.alpha_speed_state);
-    if isfield(cfg.REWARD, 'ADAPT')
-        fprintf(fid, 'adapt_enable: %d\n', cfg.REWARD.ADAPT.enable);
-    end
-    if isfield(cfg, 'EXPERIMENT') && isfield(cfg.EXPERIMENT, 'id')
-        fprintf(fid, 'experiment_id: %s\n', cfg.EXPERIMENT.id);
-    end
-    if isfield(cfg, 'REWARD') && isfield(cfg.REWARD, 'version')
-        fprintf(fid, 'reward_version: %s\n', cfg.REWARD.version);
-    end
 end
 
 function localCleanupEval(cfgPath)

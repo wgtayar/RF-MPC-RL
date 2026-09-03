@@ -1,8 +1,5 @@
 function Results = static_sweep(sweepCfg)
-    rootDir = fileparts(mfilename('fullpath'));
-
-    add_if_exists(fullfile(rootDir, 'fcns'));
-    add_if_exists(fullfile(rootDir, 'fcns_MPC'));
+    rootDir = bootstrap_RF_MPC_RL();
 
     if nargin < 1
         sweepCfg = struct();

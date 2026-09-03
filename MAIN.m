@@ -119,7 +119,7 @@
 % [t,EA,EAd] = fig_animate(tout,Xout,Uout,Xdout,Udout,Uext,p);
 
 %% initialization
-addpath fcns fcns_MPC
+rootDir = bootstrap_RF_MPC_RL(); %#ok<NASGU>
 
 %% --- parameters ---
 % ---- gait ----

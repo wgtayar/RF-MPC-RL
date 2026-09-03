@@ -1,10 +1,5 @@
 function train_RL_MPC_from_saved_agent(savedAgentPath, maxEpisodes, noiseVariance, runLabel)
-    rootDir = fileparts(mfilename('fullpath'));
-
-    addpath(rootDir);
-    addpath(fullfile(rootDir, 'fcns'));
-    addpath(fullfile(rootDir, 'fcns_MPC'));
-    addpath(fullfile(rootDir, 'RL Midtraining Logs'));
+    rootDir = bootstrap_RF_MPC_RL();
 
     rehash
 
@@ -48,6 +43,7 @@ function train_RL_MPC_from_saved_agent(savedAgentPath, maxEpisodes, noiseVarianc
     S = load(cfgPath, 'env', 'cfg', 'lower_abs', 'upper_abs', 'initial_R');
     env = S.env;
     cfg = S.cfg;
+    rng(cfg.RNG_SEED, cfg.RNG_ALGORITHM);
 
     sourceExperimentId = '';
     if isfield(cfg, 'EXPERIMENT') && isfield(cfg.EXPERIMENT, 'id')
@@ -91,12 +87,17 @@ function train_RL_MPC_from_saved_agent(savedAgentPath, maxEpisodes, noiseVarianc
     cfg.RUN.root_dir = logsRoot;
     cfg.RUN.run_dir = runDir;
     cfg.RUN.run_stamp = runStamp;
+    cfg.RUN.run_id = runDirName;
     cfg.RUN.log_file = logFile;
     cfg.RUN.checkpoint_file = fullfile(runDir, ['rl_checkpoints_' runStamp '.mat']);
     cfg.RUN.chunk_csv = fullfile(runDir, ['rl_chunks_' runStamp '.csv']);
     cfg.RUN.decision_csv = fullfile(runDir, ['rl_decisions_' runStamp '.csv']);
     cfg.RUN.failure_csv = fullfile(runDir, ['rl_failures_' runStamp '.csv']);
     cfg.RUN.saved_agents_dir = savedAgentsDir;
+    cfg.RUN.qp_failure_dir = fullfile(runDir, 'qp_failures');
+    if ~exist(cfg.RUN.qp_failure_dir, 'dir')
+        mkdir(cfg.RUN.qp_failure_dir);
+    end
     cfg.RUN.experiment_id = '';
     cfg.RUN.reward_version = '';
 
@@ -130,9 +131,21 @@ function train_RL_MPC_from_saved_agent(savedAgentPath, maxEpisodes, noiseVarianc
 
     sourceAgentFile = savedAgentPath;
     save(fullfile(runDir, 'warmstart_source_agent.mat'), 'sourceAgentFile');
-    save(fullfile(runDir, ['cfg_snapshot_' runStamp '.mat']), 'cfg');
-    write_warmstart_manifest(fullfile(runDir, ['run_manifest_' runStamp '.txt']), ...
-        cfg, savedAgentPath, sourceRewardVersion, maxEpisodes, noiseVariance, runLabel);
+    cfgSnapshotFile = fullfile(runDir, ['cfg_snapshot_' runStamp '.mat']);
+    manifestFile = fullfile(runDir, ['run_manifest_' runStamp '.txt']);
+    runInfo = struct();
+    runInfo.run_id = cfg.RUN.run_id;
+    runInfo.training_mode = 'warmstart';
+    runInfo.max_episodes = maxEpisodes;
+    runInfo.random_seed = cfg.RNG_SEED;
+    runInfo.noise_variance = noiseVariance;
+    runInfo.noise_decay = 0;
+    runInfo.source_agent = savedAgentPath;
+    runInfo.run_label = runLabel;
+    runInfo.start_time = char(datetime('now', 'TimeZone', 'local', ...
+        'Format', 'yyyy-MM-dd''T''HH:mm:ssXXX'));
+    save(cfgSnapshotFile, 'cfg');
+    write_run_manifest(manifestFile, cfg, runInfo);
 
     save(cfgPath, 'cfg', 'agent', '-append');
 
@@ -168,7 +181,14 @@ function train_RL_MPC_from_saved_agent(savedAgentPath, maxEpisodes, noiseVarianc
         'SaveAgentValue', 1, ...
         'SaveAgentDirectory', savedAgentsDir);
 
+    wallClockStart = tic;
     stats = train(agent, env, trainOpts);
+
+    runInfo.end_time = char(datetime('now', 'TimeZone', 'local', ...
+        'Format', 'yyyy-MM-dd''T''HH:mm:ssXXX'));
+    runInfo.wall_clock_seconds = toc(wallClockStart);
+    write_run_manifest(manifestFile, cfg, runInfo);
+    save(cfgSnapshotFile, 'cfg', 'runInfo');
 
     cfg.LOG.enable = false;
     cfg.RUN.enabled = false;
@@ -193,7 +213,8 @@ function agent = localSetAgentNoise(agent, noiseVariance)
             warning('Agent does not expose AgentOptions.NoiseOptions. Noise was not overridden.');
         end
     catch ME
-        warning('Could not override agent noise options: %s', ME.message);
+        warning('train_RL_MPC_from_saved_agent:NoiseOverrideFailed', ...
+            'Could not override agent noise options: %s', ME.message);
     end
 end
 
@@ -235,86 +256,6 @@ function label = localCleanLabel(label)
     label = regexprep(label, '^_+|_+$', '');
     if isempty(label)
         label = 'run';
-    end
-end
-
-function write_warmstart_manifest(manifestPath, cfg, sourceAgentPath, sourceRewardVersion, maxEpisodes, noiseVariance, runLabel)
-    fid = fopen(manifestPath, 'w');
-    if fid < 0
-        warning('Could not write run manifest: %s', manifestPath);
-        return
-    end
-
-    cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
-
-    fprintf(fid, 'train_mode: warmstart\n');
-    fprintf(fid, 'warmstart_mode: policy_consolidation\n');
-    fprintf(fid, 'source_agent: %s\n', sourceAgentPath);
-    fprintf(fid, 'source_reward_version: %s\n', sourceRewardVersion);
-    fprintf(fid, 'run_label: %s\n', runLabel);
-    fprintf(fid, 'max_episodes: %d\n', maxEpisodes);
-    fprintf(fid, 'noise_variance: %.12g\n', noiseVariance);
-    fprintf(fid, 'noise_std: %.12g\n', sqrt(max(noiseVariance, 0)));
-
-    if isfield(cfg, 'EXPERIMENT') && isfield(cfg.EXPERIMENT, 'id')
-        fprintf(fid, 'experiment_id: %s\n', cfg.EXPERIMENT.id);
-    end
-
-    if isfield(cfg, 'EXPERIMENT') && isfield(cfg.EXPERIMENT, 'parent_id')
-        fprintf(fid, 'parent_experiment_id: %s\n', cfg.EXPERIMENT.parent_id);
-    end
-
-    if isfield(cfg, 'EXPERIMENT') && isfield(cfg.EXPERIMENT, 'description')
-        fprintf(fid, 'experiment_description: %s\n', cfg.EXPERIMENT.description);
-    end
-
-    if isfield(cfg, 'REWARD') && isfield(cfg.REWARD, 'version')
-        fprintf(fid, 'reward_version: %s\n', cfg.REWARD.version);
-    end
-
-    if isfield(cfg, 'REWARD') && isfield(cfg.REWARD, 'description')
-        fprintf(fid, 'reward_description: %s\n', cfg.REWARD.description);
-    end
-
-    fprintf(fid, 'mission_target_m: %.6f\n', cfg.MISSION.D_TARGET_M);
-    fprintf(fid, 'mission_duration_s: %.6f\n', cfg.MISSION_DURATION);
-    fprintf(fid, 'episode_steps: %d\n', cfg.EP_STEPS);
-    fprintf(fid, 'chunk_duration_s: %.6f\n', cfg.CHUNK_DURATION);
-    fprintf(fid, 'apply_every: %d\n', cfg.APPLY_EVERY);
-
-    fprintf(fid, 'gamma_v_min: %.6f\n', cfg.GAMMA_V_MIN);
-    fprintf(fid, 'gamma_v_max: %.6f\n', cfg.GAMMA_V_MAX);
-    fprintf(fid, 'v_min: %.6f\n', cfg.V_MIN);
-    fprintf(fid, 'v_max: %.6f\n', cfg.V_MAX);
-    fprintf(fid, 'v_exec_cap: %.6f\n', cfg.V_MIN + cfg.GAMMA_V_MAX * (cfg.V_MAX - cfg.V_MIN));
-
-    fprintf(fid, 'gamma_a_min: %.6f\n', cfg.GAMMA_A_MIN);
-    fprintf(fid, 'gamma_a_max: %.6f\n', cfg.GAMMA_A_MAX);
-    fprintf(fid, 'dr_max: %.6f\n', cfg.DR_MAX);
-    fprintf(fid, 'd_gamma_v_max: %.6f\n', cfg.DGAMMA_V_MAX);
-
-    fprintf(fid, 'battery_parallel: %d\n', cfg.BATTERY.n_parallel);
-    fprintf(fid, 'battery_terminal_margin: %.6f\n', cfg.BATTERY.terminal_margin);
-
-    fprintf(fid, 'reward_w_pace: %.6f\n', cfg.REWARD.w_pace);
-    fprintf(fid, 'reward_w_shortfall: %.6f\n', cfg.REWARD.w_shortfall);
-    fprintf(fid, 'reward_w_ahead: %.6f\n', cfg.REWARD.w_ahead);
-    fprintf(fid, 'reward_w_risk: %.6f\n', cfg.REWARD.w_risk);
-    fprintf(fid, 'reward_final_soc_bonus: %.6f\n', cfg.REWARD.final_soc_bonus);
-    fprintf(fid, 'reward_alpha_state: %.6f\n', cfg.REWARD.alpha_state);
-    fprintf(fid, 'reward_alpha_speed_state: %.6f\n', cfg.REWARD.alpha_speed_state);
-    fprintf(fid, 'reward_w_v_shortfall: %.6f\n', cfg.REWARD.w_v_shortfall);
-
-    if isfield(cfg.REWARD, 'ADAPT')
-        fprintf(fid, 'adapt_enable: %d\n', cfg.REWARD.ADAPT.enable);
-        fprintf(fid, 'adapt_w_efficiency_bonus: %.6f\n', cfg.REWARD.ADAPT.w_efficiency_bonus);
-        fprintf(fid, 'adapt_w_excess_speed: %.6f\n', cfg.REWARD.ADAPT.w_excess_speed);
-        fprintf(fid, 'adapt_w_cap_use: %.6f\n', cfg.REWARD.ADAPT.w_cap_use);
-        fprintf(fid, 'adapt_w_current_conserve: %.6f\n', cfg.REWARD.ADAPT.w_current_conserve);
-        fprintf(fid, 'adapt_w_terminal_soc: %.6f\n', cfg.REWARD.ADAPT.w_terminal_soc);
-        fprintf(fid, 'adapt_I_conserve_high: %.6f\n', cfg.REWARD.ADAPT.I_conserve_high);
-        fprintf(fid, 'adapt_I_conserve_low: %.6f\n', cfg.REWARD.ADAPT.I_conserve_low);
-        fprintf(fid, 'adapt_I_conserve_scale: %.6f\n', cfg.REWARD.ADAPT.I_conserve_scale);
     end
 end
 

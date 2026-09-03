@@ -1,4 +1,5 @@
 function out = run_proxy_sim_once(v_cmd, a_cmd, SimTimeDuration, kneeCsv, betaMc, tauHip4_joint, Nhip, eta, Kt)
+bootstrap_RF_MPC_RL();
 % run_proxy_sim_once
 % One RF-MPC sim (gait=0 trot) + knee proxy + constant hip proxy.
 %
