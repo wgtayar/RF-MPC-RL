@@ -92,6 +92,9 @@ function train_RL_MPC(maxEpisodes)
     fprintf('[RUN DIR] %s\n', runDir);
     fprintf('[LOG FILE] %s\n', logFile);
     fprintf('[SAVED AGENTS DIR] %s\n', savedAgentsDir);
+    localAppendLifecycleLog(logFile, sprintf( ...
+        '[TRAIN START] time=%s episodes=%d seed=%d run_dir=%s', ...
+        runInfo.start_time, maxEpisodes, cfg.RNG_SEED, runDir));
 
     trainOpts = rlTrainingOptions( ...
         'MaxEpisodes', maxEpisodes, ...
@@ -119,8 +122,23 @@ function train_RL_MPC(maxEpisodes)
     save(finalAgentFile, 'agent', 'stats');
 
     fprintf('[TRAIN END] final agent saved to %s\n', finalAgentFile);
+    localAppendLifecycleLog(logFile, sprintf( ...
+        '[TRAIN END] time=%s wall_clock_seconds=%.6f final_agent=%s', ...
+        runInfo.end_time, runInfo.wall_clock_seconds, finalAgentFile));
     disp('Training complete.')
 end
+
+function localAppendLifecycleLog(logFile, message)
+    fid = fopen(logFile, 'a');
+    if fid < 0
+        warning('train_RL_MPC:LifecycleLogOpenFailed', ...
+            'Could not append lifecycle record to %s.', logFile);
+        return
+    end
+    cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
+    fprintf(fid, '%s\n', message);
+end
+
 function localCleanupTrain(cfgPath)
     try
         diary off
