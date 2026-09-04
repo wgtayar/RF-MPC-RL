@@ -134,5 +134,36 @@ classdef testPhase2Diagnostics < matlab.unittest.TestCase
                 "local_perturbation"));
             testCase.verifyGreaterThan(height(samples), 100);
         end
+
+        function transactionRestorePreservesPayloadAndContinuation(testCase)
+            simulation = initialize_mpc_replay_state(testCase.Config, 0);
+            decision = struct('episode', 2, 'decision', 4, ...
+                'progress_m', 82.5, 'charge_As', 1234);
+            controller = struct('previous_gamma', [0.3; 0.2], ...
+                'candidate_action', zeros(5, 1), ...
+                'applied_action', nan(5, 1), 'fallback_level', 0);
+            snapshot = capture_rl_transaction_state( ...
+                simulation, decision, controller);
+            [restoredSimulation, restoredDecision, restoredController] = ...
+                restore_rl_transaction_state(snapshot);
+            testCase.verifyEqual(restoredSimulation, simulation);
+            testCase.verifyEqual(restoredDecision, decision);
+            testCase.verifyEqual(restoredController, controller);
+
+            control = struct('R', simulation.R, ...
+                'v_cmd', 0.5, 'a_cmd', 0.25);
+            options = struct('duration_s', 0.002, ...
+                'solver_strategy', "default", 'capture_trace', true, ...
+                'update_proxy', true, 'update_battery', false);
+            [expected, expectedOut] = simulate_mpc_horizon( ...
+                simulation, control, testCase.Config, options);
+            [actual, actualOut] = simulate_mpc_horizon( ...
+                restoredSimulation, control, testCase.Config, options);
+            testCase.verifyEqual(actual.Xt, expected.Xt, 'AbsTol', 1e-12);
+            testCase.verifyEqual(actual.Ut, expected.Ut, 'AbsTol', 1e-12);
+            expectedTrace = removevars(expectedOut.trace, 'solver_wall_time_s');
+            actualTrace = removevars(actualOut.trace, 'solver_wall_time_s');
+            testCase.verifyEqual(actualTrace, expectedTrace);
+        end
     end
 end
