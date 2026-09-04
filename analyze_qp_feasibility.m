@@ -40,36 +40,47 @@ function result = analyze_qp_feasibility(snapshotOrQp)
     phaseAineq = [scaledAineq*nullBasis, -eye(numberInequalities)];
     phaseBineq = scaledBineq - scaledAineq*equalityParticular;
     lowerBound = [-inf(numberFreeVariables, 1); zeros(numberInequalities, 1)];
-    options = optimoptions('linprog', 'Display', 'none', ...
-        'Algorithm', 'dual-simplex-highs', ...
-        'ConstraintTolerance', 1e-10, 'OptimalityTolerance', 1e-10);
-
-    primaryPhaseError = [];
-    phaseAlgorithm = "dual-simplex-highs";
-    try
-        [phaseSolution, phaseObjective, phaseExitflag, phaseOutput] = linprog( ...
-            objective, phaseAineq, phaseBineq, [], [], lowerBound, [], options);
-    catch ME
-        primaryPhaseError = ME;
-        phaseAlgorithm = "dual-simplex";
-        fallbackOptions = optimoptions(options, 'Algorithm', 'dual-simplex');
-        [phaseSolution, phaseObjective, phaseExitflag, phaseOutput] = linprog( ...
-            objective, phaseAineq, phaseBineq, [], [], lowerBound, [], ...
-            fallbackOptions);
-        options = fallbackOptions;
+    algorithms = ["dual-simplex-highs", "dual-simplex", ...
+        "interior-point", "interior-point-legacy"];
+    phaseErrors = strings(numel(algorithms), 2);
+    phaseErrorCount = 0;
+    phaseSolved = false;
+    for algorithm = algorithms
+        options = optimoptions('linprog', 'Display', 'none', ...
+            'Algorithm', algorithm, 'ConstraintTolerance', 1e-10, ...
+            'OptimalityTolerance', 1e-10);
+        try
+            [phaseSolution, phaseObjective, phaseExitflag, phaseOutput] = ...
+                linprog(objective, phaseAineq, phaseBineq, [], [], ...
+                lowerBound, [], options);
+            phaseAlgorithm = algorithm;
+            phaseSolved = true;
+            break
+        catch ME
+            phaseErrorCount = phaseErrorCount + 1;
+            phaseErrors(phaseErrorCount, :) = ...
+                [string(ME.identifier), string(ME.message)];
+        end
+    end
+    phaseErrors = phaseErrors(1:phaseErrorCount, :);
+    if ~phaseSolved
+        error('analyze_qp_feasibility:AllPhaseSolversFailed', ...
+            'All Phase-I linprog algorithms failed. Last error: %s', ...
+            phaseErrors(end, 2));
     end
 
     result = struct();
     result.phase1_exitflag = phaseExitflag;
     result.phase1_output = phaseOutput;
     result.phase1_solver_algorithm = phaseAlgorithm;
-    result.phase1_solver_fallback_used = ~isempty(primaryPhaseError);
-    if isempty(primaryPhaseError)
+    result.phase1_solver_fallback_used = phaseErrorCount > 0;
+    result.phase1_solver_errors = phaseErrors;
+    if isempty(phaseErrors)
         result.phase1_primary_error_identifier = "";
         result.phase1_primary_error_message = "";
     else
-        result.phase1_primary_error_identifier = string(primaryPhaseError.identifier);
-        result.phase1_primary_error_message = string(primaryPhaseError.message);
+        result.phase1_primary_error_identifier = phaseErrors(1, 1);
+        result.phase1_primary_error_message = phaseErrors(1, 2);
     end
     result.phase1_solver_objective = phaseObjective;
     result.minimum_scaled_equality_residual_l2 = norm(scaledEqualityResidual);
