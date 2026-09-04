@@ -68,10 +68,14 @@ function summary = analyze_dynamic_divergence(runDir, evidenceFolders, outputFol
             variableNames, detection, outputFolder, row.case_id);
     end
     summary = struct2table(rows);
+    provenance = struct('source_git_sha', localGitSha(), ...
+        'matlab_version', string(version), 'created_at', ...
+        string(datetime('now', 'TimeZone', 'local')), ...
+        'phase1_run_dir', runDir, 'evidence_folders', evidenceFolders);
     writetable(summary, fullfile(outputFolder, 'dynamic_divergence_summary.csv'));
     save(fullfile(outputFolder, 'dynamic_divergence_summary.mat'), ...
         'summary', 'variableNames', 'absoluteThresholds', ...
-        'persistenceSamples');
+        'persistenceSamples', 'provenance');
 end
 
 function mechanism = localNearestMechanism(trace, detection)
@@ -144,4 +148,13 @@ function file = localSingleFile(folder, pattern)
             pattern, folder, numel(files));
     end
     file = string(fullfile(files.folder, files.name));
+end
+
+function sha = localGitSha()
+    [status, text] = system('git rev-parse HEAD');
+    if status == 0
+        sha = string(strtrim(text));
+    else
+        sha = "unknown";
+    end
 end
