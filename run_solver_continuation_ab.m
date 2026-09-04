@@ -174,12 +174,15 @@ function [state, trace, fallbackCount] = localAdvancePrefix( ...
     segmentStart = state.t;
     requestedDuration = options.duration_s;
     p = get_params(state.gait);
-    traceParts = cell(0, 1);
+    maximumParts = 2*ceil(requestedDuration/p.simTimeStep) + 2;
+    traceParts = cell(maximumParts, 1);
+    partCount = 0;
     fallbackCount = 0;
     while state.t < segmentStart + requestedDuration - p.simTimeStep/2
         options.duration_s = segmentStart + requestedDuration - state.t;
         [state, out] = simulate_mpc_horizon(state, control, cfg, options);
-        traceParts{end+1, 1} = out.trace;
+        partCount = partCount + 1;
+        traceParts{partCount} = out.trace;
         if out.completed_horizon
             break
         end
@@ -198,7 +201,8 @@ function [state, trace, fallbackCount] = localAdvancePrefix( ...
         rescueOptions.update_proxy = false;
         [state, rescue] = simulate_mpc_horizon( ...
             state, control, cfg, rescueOptions);
-        traceParts{end+1, 1} = rescue.trace;
+        partCount = partCount + 1;
+        traceParts{partCount} = rescue.trace;
         if ~rescue.completed_horizon
             error('run_solver_continuation_ab:PrefixRescueFailure', ...
                 'Prefix active-set rescue failed at %.3f s with %s.', ...
@@ -207,7 +211,7 @@ function [state, trace, fallbackCount] = localAdvancePrefix( ...
         fallbackCount = fallbackCount + 1;
         options.initial_problem_override = struct();
     end
-    trace = vertcat(traceParts{:});
+    trace = vertcat(traceParts{1:partCount});
 end
 
 function control = localControl(qp)

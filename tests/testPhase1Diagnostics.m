@@ -94,7 +94,7 @@ end
 function testFailureSnapshotRoundTrip(testCase)
     outputFolder = tempname;
     mkdir(outputFolder);
-    cleanupObj = onCleanup(@() localRemoveFolder(outputFolder)); %#ok<NASGU>
+    cleanupObj = onCleanup(@() localRemoveFolder(outputFolder));
     cfg.DIAGNOSTICS.enable = true;
     cfg.DIAGNOSTICS.save_full_qp_on_failure = true;
     cfg.RUN.enabled = true;
@@ -116,7 +116,7 @@ end
 function testFailureSnapshotUsesPhase2SchemaWithFsmState(testCase)
     outputFolder = tempname;
     mkdir(outputFolder);
-    cleanupObj = onCleanup(@() localRemoveFolder(outputFolder)); %#ok<NASGU>
+    cleanupObj = onCleanup(@() localRemoveFolder(outputFolder));
     cfg.DIAGNOSTICS.enable = true;
     cfg.DIAGNOSTICS.save_full_qp_on_failure = true;
     cfg.RUN.enabled = true;
@@ -176,7 +176,7 @@ function testManifestContainsRequiredReproducibilityFields(testCase)
     rootDir = bootstrap_RF_MPC_RL();
     active = load(fullfile(rootDir, 'rlEnv_MPC_R.mat'), 'cfg');
     manifestFile = [tempname '.txt'];
-    cleanupObj = onCleanup(@() localDeleteFile(manifestFile)); %#ok<NASGU>
+    cleanupObj = onCleanup(@() localDeleteFile(manifestFile));
     runInfo = struct('run_id', 'unit_test', 'training_mode', 'test', ...
         'max_episodes', 50, 'random_seed', active.cfg.RNG_SEED, ...
         'noise_variance', active.cfg.TRAIN.noise_variance, ...

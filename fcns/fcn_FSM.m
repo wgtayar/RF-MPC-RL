@@ -6,7 +6,6 @@ gait = p.gait;
 Tst_ = p.Tst;
 Tst = min(Tst_,0.2/norm(Xt(4:5)));
 Tsw = p.Tsw;
-T = Tst + Tsw;
 Tair = 1/2 * (Tsw - Tst);
 
 [pc,dpc,vR,wb] = deal(Xt(1:3),Xt(4:6),Xt(7:15),Xt(16:18));
