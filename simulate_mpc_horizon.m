@@ -96,7 +96,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             traceCount = traceCount + 1;
             traceRows(traceCount) = localTraceBefore( ...
                 time, iteration, strategy, solver, XtQp, UtQp, Xd, Ud, ...
-                FSM, H, Aeq, kneeCurrent);
+                FSM, H, Aeq, kneeCurrent, control);
         end
 
         if ~solver.success
@@ -222,11 +222,15 @@ function row = localEmptyTrace()
         'linear_velocity_error_after', NaN, 'com_velocity_after', NaN, ...
         'position_invariant_norm_after', NaN, 'Ut_norm_after', NaN, ...
         'force_correction_norm', NaN, 'desired_force_norm', NaN, ...
-        'knee_plus_hip_current_A', NaN);
+        'knee_plus_hip_current_A', NaN, ...
+        'dR1', NaN, 'dR2', NaN, 'dR3', NaN, ...
+        'gamma_v', NaN, 'gamma_a', NaN, ...
+        'R1', NaN, 'R2', NaN, 'R3', NaN, ...
+        'v_cmd', NaN, 'a_cmd', NaN);
 end
 
 function row = localTraceBefore(time, iteration, strategy, solver, ...
-        Xt, Ut, Xd, Ud, FSM, H, Aeq, current)
+        Xt, Ut, Xd, Ud, FSM, H, Aeq, current, control)
     row = localEmptyTrace();
     row.time_s = time;
     row.iteration = iteration;
@@ -267,6 +271,18 @@ function row = localTraceBefore(time, iteration, strategy, solver, ...
     row.Ut_norm_before = norm(Ut);
     row.desired_force_norm = norm(Ud(:, 1));
     row.knee_plus_hip_current_A = current;
+    row.R1 = control.R(1);
+    row.R2 = control.R(2);
+    row.R3 = control.R(3);
+    row.v_cmd = control.v_cmd;
+    row.a_cmd = control.a_cmd;
+    if isfield(control, 'action') && numel(control.action) >= 5
+        row.dR1 = control.action(1);
+        row.dR2 = control.action(2);
+        row.dR3 = control.action(3);
+        row.gamma_v = control.action(4);
+        row.gamma_a = control.action(5);
+    end
 end
 
 function row = localTraceAfter(row, Xt, Ut, Xd)

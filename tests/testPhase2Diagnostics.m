@@ -93,5 +93,18 @@ classdef testPhase2Diagnostics < matlab.unittest.TestCase
             testCase.verifyLessThanOrEqual( ...
                 result.diagnostics.equality_residual_max_abs, 1e-6);
         end
+
+        function persistentDivergenceRequiresSpecifiedRun(testCase)
+            time = (0:0.01:0.19).';
+            values = zeros(numel(time), 2);
+            values(8:end, 2) = 3;
+            result = detect_persistent_divergence( ...
+                time, values, [0, 0], [1, 1], 5);
+            testCase.verifyTrue(result.found);
+            testCase.verifyEqual(result.index, 8);
+            testCase.verifyEqual(result.time, 0.07, 'AbsTol', 1e-12);
+            testCase.verifyEqual(result.variable_index, 2);
+            testCase.verifyFalse(result.left_censored);
+        end
     end
 end
