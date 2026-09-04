@@ -19,6 +19,10 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     max_iter = floor(cfg.CHUNK_DURATION / dt_sim);
     rootDir = fileparts(mfilename('fullpath'));
     snap_path = fullfile(rootDir, 'SimSnapshot_RL.mat');
+    if isfield(cfg, 'RUN') && isfield(cfg.RUN, 'sim_snapshot_file') && ...
+            strlength(string(cfg.RUN.sim_snapshot_file)) > 0
+        snap_path = char(cfg.RUN.sim_snapshot_file);
+    end
 
     kneeCsv = cfg.PROXY.kneeCsv;
     betaMc = cfg.PROXY.betaMc;
@@ -63,6 +67,7 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
         Sim.battery.n_series = cfg.BATTERY.n_series;
         Sim.battery.n_parallel = cfg.BATTERY.n_parallel;
         Sim.kneeProxyState = init_knee_proxy_state();
+        Sim.fsmInternalState = struct();
     end
 
     x_start = Xt(1);
@@ -84,6 +89,11 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     if ~isfield(Sim, 'kneeProxyState') || isempty(Sim.kneeProxyState)
         Sim.kneeProxyState = init_knee_proxy_state();
     end
+    if ~isfield(Sim, 'fsmInternalState')
+        Sim.fsmInternalState = struct();
+    end
+    fsmStateToRestore = Sim.fsmInternalState;
+    fsmInternalState = Sim.fsmInternalState;
 
     qp_options = optimoptions('quadprog', 'Display', 'off');
 
@@ -131,6 +141,8 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     lastSuccessfulXd = [];
     lastSuccessfulUd = [];
     lastSuccessfulFSM = nan(4, 1);
+    lastSuccessfulFsmInternalState = struct();
+    lastSuccessfulQp = struct();
     lastQpOutput = struct();
     lastLambda = struct();
 
@@ -142,10 +154,13 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
             iter_time(ii) = t0_abs;
 
             if gait == 1
-                [FSM, Xd, Ud, Xt] = fcn_FSM_bound(t_hor, Xt, p);
+                [FSM, Xd, Ud, Xt, fsmInternalState] = ...
+                    fcn_FSM_bound(t_hor, Xt, p, fsmStateToRestore);
             else
-                [FSM, Xd, Ud, Xt] = fcn_FSM(t_hor, Xt, p);
+                [FSM, Xd, Ud, Xt, fsmInternalState] = ...
+                    fcn_FSM(t_hor, Xt, p, fsmStateToRestore);
             end
+            fsmStateToRestore = struct();
 
             fsm_all(ii,:) = FSM(:).';
 
@@ -194,7 +209,9 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
                     H, g, Aineq, bineq, Aeq, beq, exitflag, qpOutput, lambda, ...
                     fail_reason, fail_iter, fail_time_s, v_cmd, a_cmd, ...
                     lastSuccessfulXt, lastSuccessfulUt, lastSuccessfulXd, ...
-                    lastSuccessfulUd, lastSuccessfulFSM, diagnosticContext);
+                    lastSuccessfulUd, lastSuccessfulFSM, fsmInternalState, ...
+                    lastSuccessfulFsmInternalState, lastSuccessfulQp, ...
+                    diagnosticContext);
                 break
             end
 
@@ -239,7 +256,9 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
                     H, g, Aineq, bineq, Aeq, beq, exitflag, qpOutput, lambda, ...
                     fail_reason, fail_iter, fail_time_s, v_cmd, a_cmd, ...
                     lastSuccessfulXt, lastSuccessfulUt, lastSuccessfulXd, ...
-                    lastSuccessfulUd, lastSuccessfulFSM, diagnosticContext);
+                    lastSuccessfulUd, lastSuccessfulFSM, fsmInternalState, ...
+                    lastSuccessfulFsmInternalState, lastSuccessfulQp, ...
+                    diagnosticContext);
                 break
             end
 
@@ -254,6 +273,10 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
             lastSuccessfulXd = Xd;
             lastSuccessfulUd = Ud;
             lastSuccessfulFSM = FSM;
+            lastSuccessfulFsmInternalState = fsmInternalState;
+            lastSuccessfulQp = localBuildSuccessfulQp(XtQp, UtQp, Xd, Ud, ...
+                FSM, fsmInternalState, H, g, Aineq, bineq, Aeq, beq, ...
+                zval, exitflag, qpOutput, lambda, qpDiagnostics, t0_abs);
         end
     catch ME
         feasible = false;
@@ -280,7 +303,9 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
                 caughtExitflag, lastQpOutput, lastLambda, ...
                 fail_reason, fail_iter, fail_time_s, v_cmd, a_cmd, ...
                 lastSuccessfulXt, lastSuccessfulUt, lastSuccessfulXd, ...
-                lastSuccessfulUd, lastSuccessfulFSM, diagnosticContext);
+                lastSuccessfulUd, lastSuccessfulFSM, fsmInternalState, ...
+                lastSuccessfulFsmInternalState, lastSuccessfulQp, ...
+                diagnosticContext);
             failureQP.exception = ME;
         end
     end
@@ -324,10 +349,15 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     out.Tst_commanded = p.Tst;
     out.Tsw_commanded = p.Tsw;
     out.state_components = stateComponents;
+    out.fsm_internal_state_end = fsmInternalState;
 
     if ~feasible
+        if isfinite(fail_time_s)
+            Sim.t = fail_time_s;
+        end
         Sim.Xt = Xt;
         Sim.Ut = Ut;
+        Sim.fsmInternalState = fsmInternalState;
         save(snap_path, 'Sim');
     
         out.tracking_error_total = NaN;
@@ -414,6 +444,7 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     Sim.t = Sim.t + cfg.CHUNK_DURATION;
     Sim.Xt = Xt;
     Sim.Ut = Ut;
+    Sim.fsmInternalState = fsmInternalState;
 
     save(snap_path, 'Sim');
 
@@ -465,7 +496,8 @@ end
 function failureQP = localBuildFailureQp( ...
         XtQp, UtQp, propagatedXt, Xd, Ud, FSM, p, H, g, Aineq, bineq, ...
         Aeq, beq, exitflag, qpOutput, lambda, failReason, failIter, ...
-        failTime, vCmd, aCmd, lastXt, lastUt, lastXd, lastUd, lastFSM, context)
+        failTime, vCmd, aCmd, lastXt, lastUt, lastXd, lastUd, lastFSM, ...
+        fsmInternalState, lastFsmInternalState, lastSuccessfulQp, context)
     failureQP = struct();
     failureQP.fail_reason = failReason;
     failureQP.fail_iter = failIter;
@@ -502,6 +534,9 @@ function failureQP = localBuildFailureQp( ...
     failureQP.last_successful_Xd = lastXd;
     failureQP.last_successful_Ud = lastUd;
     failureQP.last_successful_FSM = lastFSM;
+    failureQP.fsm_internal_state = fsmInternalState;
+    failureQP.last_successful_fsm_internal_state = lastFsmInternalState;
+    failureQP.last_successful_qp = lastSuccessfulQp;
     failureQP.context = context;
     try
         [failureQP.A, failureQP.B, failureQP.d] = ...
@@ -526,6 +561,30 @@ function failureQP = localBuildFailureQp( ...
     failureQP.H_negative_eigenvalue_count = nnz(hEigenvalues < -1e-10);
     failureQP.H_near_zero_eigenvalue_count = nnz(abs(hEigenvalues) <= 1e-10);
     failureQP.state_components = localStateComponents(XtQp, Xd);
+end
+
+function qp = localBuildSuccessfulQp(Xt, Ut, Xd, Ud, FSM, fsmState, ...
+        H, g, Aineq, bineq, Aeq, beq, z, exitflag, output, lambda, ...
+        diagnostics, time)
+    qp = struct();
+    qp.time_s = time;
+    qp.Xt = Xt;
+    qp.Ut = Ut;
+    qp.Xd = Xd;
+    qp.Ud = Ud;
+    qp.FSM = FSM;
+    qp.fsm_internal_state = fsmState;
+    qp.H = H;
+    qp.g = g;
+    qp.Aineq = Aineq;
+    qp.bineq = bineq;
+    qp.Aeq = Aeq;
+    qp.beq = beq;
+    qp.solution = z;
+    qp.exitflag = exitflag;
+    qp.quadprog_output = output;
+    qp.lambda = lambda;
+    qp.diagnostics = diagnostics;
 end
 
 function [activeTolerance, nearActiveTolerance] = localDiagnosticTolerances(cfg)

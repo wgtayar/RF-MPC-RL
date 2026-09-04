@@ -1,4 +1,4 @@
-function [FSMout,Xd,Ud,Xt] = fcn_FSM_bound(t_,Xt,p)
+function [FSMout,Xd,Ud,Xt,stateOut] = fcn_FSM_bound(t_,Xt,p,stateIn)
 %% parameters
 acc = 1;
 vd = [2;0];
@@ -21,7 +21,19 @@ pf34 = reshape(pf,[3,4]);
 
 %% initialization
 persistent FSM Ta Tb pf_trans Ta_sw Tb_sw
-if isempty(FSM)
+if nargin >= 4 && ~isempty(stateIn)
+    requiredFields = {'FSM','Ta','Tb','pf_trans','Ta_sw','Tb_sw'};
+    if ~all(isfield(stateIn, requiredFields))
+        error('fcn_FSM_bound:InvalidState', ...
+            'Bound FSM state is missing one or more required fields.');
+    end
+    FSM = stateIn.FSM;
+    Ta = stateIn.Ta;
+    Tb = stateIn.Tb;
+    pf_trans = stateIn.pf_trans;
+    Ta_sw = stateIn.Ta_sw;
+    Tb_sw = stateIn.Tb_sw;
+elseif isempty(FSM)
     FSM = 1;
     Ta = 0;
     Tb = Ta + Tst;
@@ -214,6 +226,8 @@ Xd = repmat(Xd(:,1),[1,p.predHorizon]);
 
 %% output
 FSMout = FSM;
+stateOut = struct('FSM', FSM, 'Ta', Ta, 'Tb', Tb, ...
+    'pf_trans', pf_trans, 'Ta_sw', Ta_sw, 'Tb_sw', Tb_sw);
 
 end
 

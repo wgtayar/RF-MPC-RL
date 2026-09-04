@@ -113,6 +113,65 @@ function testFailureSnapshotRoundTrip(testCase)
     verifyEqual(testCase, saved.failureQP.context, context);
 end
 
+function testFailureSnapshotUsesPhase2SchemaWithFsmState(testCase)
+    outputFolder = tempname;
+    mkdir(outputFolder);
+    cleanupObj = onCleanup(@() localRemoveFolder(outputFolder)); %#ok<NASGU>
+    cfg.DIAGNOSTICS.enable = true;
+    cfg.DIAGNOSTICS.save_full_qp_on_failure = true;
+    cfg.RUN.enabled = true;
+    cfg.RUN.qp_failure_dir = outputFolder;
+    context = struct('episode_idx', 1, 'decision_idx', 1, ...
+        'chunk_in_decision', 1);
+    failureQP = struct('fail_iter', 1, ...
+        'fsm_internal_state', struct('FSM', ones(4, 1)));
+
+    [~, failureFile] = save_qp_failure_snapshot(cfg, context, failureQP);
+    saved = load(failureFile, 'failureQP');
+    verifyEqual(testCase, saved.failureQP.schema_version, ...
+        'phase2_qp_failure_v2');
+end
+
+function testTrotFsmStateRestorationIsEquivalent(testCase)
+    p = get_params(0);
+    [Xt, ~] = fcn_gen_XdUd(0, [], ones(4, 1), p);
+    clear fcn_FSM
+    t0 = 0.17 + p.Tmpc * (0:p.predHorizon-1);
+    [~, ~, ~, Xt0, state0] = fcn_FSM(t0, Xt, p);
+    t1 = 0.18 + p.Tmpc * (0:p.predHorizon-1);
+    [fsmExpected, XdExpected, UdExpected, XtExpected, stateExpected] = ...
+        fcn_FSM(t1, Xt0, p);
+
+    clear fcn_FSM
+    [fsmActual, XdActual, UdActual, XtActual, stateActual] = ...
+        fcn_FSM(t1, Xt0, p, state0);
+    verifyEqual(testCase, fsmActual, fsmExpected);
+    verifyEqual(testCase, XdActual, XdExpected, 'AbsTol', 1e-12);
+    verifyEqual(testCase, UdActual, UdExpected, 'AbsTol', 1e-12);
+    verifyEqual(testCase, XtActual, XtExpected, 'AbsTol', 1e-12);
+    verifyEqual(testCase, stateActual, stateExpected);
+end
+
+function testBoundFsmStateRestorationIsEquivalent(testCase)
+    p = get_params(1);
+    [p, Xt, ~] = fcn_bound_ref_traj(p);
+    clear fcn_FSM_bound
+    t0 = 0.17 + p.Tmpc * (0:p.predHorizon-1);
+    [~, ~, ~, Xt0, state0] = fcn_FSM_bound(t0, Xt, p);
+    t1 = 0.18 + p.Tmpc * (0:p.predHorizon-1);
+    [fsmExpected, XdExpected, UdExpected, XtExpected, stateExpected] = ...
+        fcn_FSM_bound(t1, Xt0, p);
+
+    clear fcn_FSM_bound
+    [fsmActual, XdActual, UdActual, XtActual, stateActual] = ...
+        fcn_FSM_bound(t1, Xt0, p, state0);
+    verifyEqual(testCase, fsmActual, fsmExpected);
+    verifyEqual(testCase, XdActual, XdExpected, 'AbsTol', 1e-12);
+    verifyEqual(testCase, UdActual, UdExpected, 'AbsTol', 1e-12);
+    verifyEqual(testCase, XtActual, XtExpected, 'AbsTol', 1e-12);
+    verifyEqual(testCase, stateActual, stateExpected);
+end
+
 function testManifestContainsRequiredReproducibilityFields(testCase)
     rootDir = bootstrap_RF_MPC_RL();
     active = load(fullfile(rootDir, 'rlEnv_MPC_R.mat'), 'cfg');

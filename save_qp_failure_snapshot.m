@@ -23,7 +23,11 @@ function [failureQpId, failureQpFile] = save_qp_failure_snapshot(cfg, context, f
         episode, decision, chunk, iteration));
     failureQpFile = string(fullfile(outputFolder, failureQpId + ".mat"));
 
-    failureQP.schema_version = 'phase1_qp_failure_v1';
+    if isfield(failureQP, 'fsm_internal_state')
+        failureQP.schema_version = 'phase2_qp_failure_v2';
+    else
+        failureQP.schema_version = 'phase1_qp_failure_v1';
+    end
     failureQP.failure_qp_id = failureQpId;
     failureQP.saved_at = char(datetime('now', 'TimeZone', 'local', ...
         'Format', 'yyyy-MM-dd''T''HH:mm:ssXXX'));

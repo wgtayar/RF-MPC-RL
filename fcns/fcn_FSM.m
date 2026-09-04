@@ -1,4 +1,4 @@
-function [FSMout,Xd,Ud,Xt] = fcn_FSM(t_,Xt,p)
+function [FSMout,Xd,Ud,Xt,stateOut] = fcn_FSM(t_,Xt,p,stateIn)
 
 %% parameters
 [L,W,d] = deal(p.L,p.W,p.d);
@@ -16,7 +16,17 @@ pf34 = reshape(Xt(idx_pf),[3,4]);
 
 %% initialization
 persistent FSM Ta Tb pf_R_trans
-if isempty(FSM)
+if nargin >= 4 && ~isempty(stateIn)
+    requiredFields = {'FSM','Ta','Tb','pf_R_trans'};
+    if ~all(isfield(stateIn, requiredFields))
+        error('fcn_FSM:InvalidState', ...
+            'FSM state must contain FSM, Ta, Tb, and pf_R_trans.');
+    end
+    FSM = stateIn.FSM;
+    Ta = stateIn.Ta;
+    Tb = stateIn.Tb;
+    pf_R_trans = stateIn.pf_R_trans;
+elseif isempty(FSM)
     FSM = zeros(4,1);
     Ta = zeros(4,1);
     Tb = ones(4,1);
@@ -225,4 +235,6 @@ end
 
 %% output
 FSMout = FSM;
+stateOut = struct('FSM', FSM, 'Ta', Ta, 'Tb', Tb, ...
+    'pf_R_trans', pf_R_trans);
 end
