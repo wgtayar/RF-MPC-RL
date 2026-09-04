@@ -43,7 +43,8 @@ function result = run_solver_continuation_ab(runDir, outputFolder, caseIds, cont
         fprintf('[solver A/B] %s: replaying prefix to %.3f s\n', ...
             caseId, qp.fail_time_s);
 
-        [branchState, prefixTrace] = localReplayPrefix(chunks, qp, cfg);
+        [branchState, prefixTrace, prefixFallbackCount] = ...
+            localReplayPrefix(chunks, qp, cfg);
         branchState.current_time = [];
         branchState.current_total = [];
         branchState.battery.soc_pct = localChunkValue( ...
@@ -107,10 +108,12 @@ function result = run_solver_continuation_ab(runDir, outputFolder, caseIds, cont
             'comparisonB', 'qp', '-v7.3');
 
         rows(caseIndex) = localSummary(caseId, qp, exactBranchProblem, ...
-            hiddenStateValidated, prefixComparison, outA, outB, outcome);
+            hiddenStateValidated, prefixFallbackCount, prefixComparison, ...
+            outA, outB, outcome);
         caseResults{caseIndex} = struct('case_id', caseId, ...
             'exact_branch_problem', exactBranchProblem, ...
             'hidden_state_validated', hiddenStateValidated, ...
+            'prefix_fallback_count', prefixFallbackCount, ...
             'prefix_comparison', prefixComparison, ...
             'comparison_A', comparisonA, 'comparison_B', comparisonB, ...
             'branch_A', outA, 'branch_B', outB, 'outcome', outcome);
@@ -132,7 +135,7 @@ function result = run_solver_continuation_ab(runDir, outputFolder, caseIds, cont
         'provenance', provenance, 'output_folder', outputFolder);
 end
 
-function [state, trace] = localReplayPrefix(chunks, qp, cfg)
+function [state, trace, fallbackCount] = localReplayPrefix(chunks, qp, cfg)
     state = initialize_mpc_replay_state(cfg, 0);
     episodeRows = chunks(chunks.episode_idx == qp.context.episode_idx, :);
     targetMask = episodeRows.decision_idx == qp.context.decision_idx & ...
@@ -143,6 +146,7 @@ function [state, trace] = localReplayPrefix(chunks, qp, cfg)
             'No chunk row found for %s.', qp.failure_qp_id);
     end
     traceParts = cell(targetIndex, 1);
+    fallbackCount = 0;
     p = get_params(0);
     for rowIndex = 1:targetIndex
         if rowIndex < targetIndex
@@ -157,14 +161,51 @@ function [state, trace] = localReplayPrefix(chunks, qp, cfg)
             'trace_start_time_s', qp.fail_time_s - 2, ...
             'classify_failure', true, 'update_proxy', true, ...
             'update_battery', false);
-        [state, out] = simulate_mpc_horizon( ...
-            state, localControlFromRow(row), cfg, options);
-        traceParts{rowIndex} = out.trace;
-        if ~out.completed_horizon
+        [state, traceParts{rowIndex}, usedFallbacks] = ...
+            localAdvancePrefix(state, localControlFromRow(row), ...
+            cfg, options);
+        fallbackCount = fallbackCount + usedFallbacks;
+    end
+    trace = vertcat(traceParts{:});
+end
+
+function [state, trace, fallbackCount] = localAdvancePrefix( ...
+        state, control, cfg, options)
+    segmentStart = state.t;
+    requestedDuration = options.duration_s;
+    p = get_params(state.gait);
+    traceParts = cell(0, 1);
+    fallbackCount = 0;
+    while state.t < segmentStart + requestedDuration - p.simTimeStep/2
+        options.duration_s = segmentStart + requestedDuration - state.t;
+        [state, out] = simulate_mpc_horizon(state, control, cfg, options);
+        traceParts{end+1, 1} = out.trace;
+        if out.completed_horizon
+            break
+        end
+        if out.terminal_reason ~= "numerical_solver_failure" || ...
+                isempty(fieldnames(out.failure_problem))
             error('run_solver_continuation_ab:PrefixFailure', ...
                 'Prefix replay failed at %.3f s with %s.', ...
                 state.t, out.terminal_reason);
         end
+
+        rescueOptions = options;
+        rescueOptions.duration_s = p.simTimeStep;
+        rescueOptions.solver_strategy = "active_set_feasible_point";
+        rescueOptions.initial_problem_override = out.failure_problem;
+        rescueOptions.capture_first_problem = true;
+        rescueOptions.update_proxy = false;
+        [state, rescue] = simulate_mpc_horizon( ...
+            state, control, cfg, rescueOptions);
+        traceParts{end+1, 1} = rescue.trace;
+        if ~rescue.completed_horizon
+            error('run_solver_continuation_ab:PrefixRescueFailure', ...
+                'Prefix active-set rescue failed at %.3f s with %s.', ...
+                state.t, rescue.terminal_reason);
+        end
+        fallbackCount = fallbackCount + 1;
+        options.initial_problem_override = struct();
     end
     trace = vertcat(traceParts{:});
 end
@@ -246,6 +287,7 @@ function row = localEmptySummary()
         'chunk', NaN, 'failure_time_s', NaN, ...
         'exact_branch_problem', false, ...
         'hidden_state_reconstruction_validated', false, ...
+        'prefix_active_set_fallback_count', NaN, ...
         'prefix_max_qp_relative_error', NaN, ...
         'prefix_Xt_relative_error', NaN, 'prefix_Ut_relative_error', NaN, ...
         'default_exitflag', NaN, 'default_continuation_survival_s', NaN, ...
@@ -263,7 +305,7 @@ function row = localEmptySummary()
 end
 
 function row = localSummary(caseId, qp, exactBranch, hiddenStateValidated, ...
-        prefixComparison, outA, outB, outcome)
+        prefixFallbackCount, prefixComparison, outA, outB, outcome)
     row = localEmptySummary();
     row.case_id = caseId;
     row.episode = qp.context.episode_idx;
@@ -272,6 +314,7 @@ function row = localSummary(caseId, qp, exactBranch, hiddenStateValidated, ...
     row.failure_time_s = qp.fail_time_s;
     row.exact_branch_problem = exactBranch;
     row.hidden_state_reconstruction_validated = hiddenStateValidated;
+    row.prefix_active_set_fallback_count = prefixFallbackCount;
     row.prefix_max_qp_relative_error = prefixComparison.max_relative_error;
     row.prefix_Xt_relative_error = prefixComparison.Xt_relative_error;
     row.prefix_Ut_relative_error = prefixComparison.Ut_relative_error;
