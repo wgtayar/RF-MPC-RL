@@ -21,7 +21,7 @@ pf34 = reshape(pf,[3,4]);
 
 %% initialization
 persistent FSM Ta Tb pf_trans Ta_sw Tb_sw
-if nargin >= 4 && ~isempty(stateIn)
+if nargin >= 4 && isstruct(stateIn) && ~isempty(fieldnames(stateIn))
     requiredFields = {'FSM','Ta','Tb','pf_trans','Ta_sw','Tb_sw'};
     if ~all(isfield(stateIn, requiredFields))
         error('fcn_FSM_bound:InvalidState', ...

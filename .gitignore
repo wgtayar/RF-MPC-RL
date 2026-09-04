@@ -20,3 +20,6 @@
 
 # MPC feasibility / boundary sweep outputs
 /MPC Boundaries Exploration/
+
+# Generated Phase-2 experiment outputs
+/Phase 2 Outputs/
