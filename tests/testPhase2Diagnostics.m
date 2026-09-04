@@ -188,5 +188,24 @@ classdef testPhase2Diagnostics < matlab.unittest.TestCase
             terminalReward = compute_rl_reward(window, cfg);
             testCase.verifyGreaterThan(rewardAboveTarget-terminalReward, 70);
         end
+
+        function candidateSelectionHonorsMissionAndSafety(testCase)
+            folder = tempname;
+            mkdir(folder);
+            cleanup = onCleanup(@() rmdir(folder, 's'));
+            map = table([1;1], ["base";"base"], [true;true], ...
+                [0.50;0.56], [0.25;0.25], [0.1;0.2], [4;5], [0;0], [0;0], [0;0], ...
+                [0.2;0.3], [0.2;0.2], ["nominal";"nominal"], ...
+                'VariableNames', {'base_id','base_label','safe_action', ...
+                'v_cmd','a_cmd','risk_score','solver_iterations_max', ...
+                'dR1','dR2','dR3','gamma_v','gamma_a','profile'});
+            mapFile = fullfile(folder, 'map.mat');
+            save(mapFile, 'map');
+            selected = select_viable_action_candidates( ...
+                mapFile, testCase.Config, folder);
+            testCase.verifyEqual(selected.v_cmd, 0.56);
+            testCase.verifyEqual(selected.mission_sufficient_safe_count, 1);
+            clear cleanup
+        end
     end
 end
