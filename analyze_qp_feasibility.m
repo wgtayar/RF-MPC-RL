@@ -44,12 +44,33 @@ function result = analyze_qp_feasibility(snapshotOrQp)
         'Algorithm', 'dual-simplex-highs', ...
         'ConstraintTolerance', 1e-10, 'OptimalityTolerance', 1e-10);
 
-    [phaseSolution, phaseObjective, phaseExitflag, phaseOutput] = linprog( ...
-        objective, phaseAineq, phaseBineq, [], [], lowerBound, [], options);
+    primaryPhaseError = [];
+    phaseAlgorithm = "dual-simplex-highs";
+    try
+        [phaseSolution, phaseObjective, phaseExitflag, phaseOutput] = linprog( ...
+            objective, phaseAineq, phaseBineq, [], [], lowerBound, [], options);
+    catch ME
+        primaryPhaseError = ME;
+        phaseAlgorithm = "dual-simplex";
+        fallbackOptions = optimoptions(options, 'Algorithm', 'dual-simplex');
+        [phaseSolution, phaseObjective, phaseExitflag, phaseOutput] = linprog( ...
+            objective, phaseAineq, phaseBineq, [], [], lowerBound, [], ...
+            fallbackOptions);
+        options = fallbackOptions;
+    end
 
     result = struct();
     result.phase1_exitflag = phaseExitflag;
     result.phase1_output = phaseOutput;
+    result.phase1_solver_algorithm = phaseAlgorithm;
+    result.phase1_solver_fallback_used = ~isempty(primaryPhaseError);
+    if isempty(primaryPhaseError)
+        result.phase1_primary_error_identifier = "";
+        result.phase1_primary_error_message = "";
+    else
+        result.phase1_primary_error_identifier = string(primaryPhaseError.identifier);
+        result.phase1_primary_error_message = string(primaryPhaseError.message);
+    end
     result.phase1_solver_objective = phaseObjective;
     result.minimum_scaled_equality_residual_l2 = norm(scaledEqualityResidual);
     result.original_quadprog_exitflag = localField(failureQP, 'exitflag', NaN);
