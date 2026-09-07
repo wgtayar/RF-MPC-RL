@@ -7,16 +7,16 @@ function [state, control, parameters] = restore_exact_dataset_state(root, rowId)
     if isempty(fileIndex)
         error('restore_exact_dataset_state:MissingRow','Requested MPC row does not exist.');
     end
-    data = load(fullfile(root,index.file(fileIndex)),'rows');
-    target = data.rows{rowId-index.first_row(fileIndex)+1};
+    rows = read_exact_state_rows(fullfile(root,index.file(fileIndex)));
+    target = rows{rowId-index.first_row(fileIndex)+1};
     saved = load(fullfile(root,target.snapshot_reference.file),'snapshot');
     state = saved.snapshot.state;
     control = saved.snapshot.control;
     parameters = saved.snapshot.parameters;
     for k = 1:fileIndex
-        data = load(fullfile(root,index.file(k)),'rows');
-        for j = 1:numel(data.rows)
-            row = data.rows{j};
+        rows = read_exact_state_rows(fullfile(root,index.file(k)));
+        for j = 1:numel(rows)
+            row = rows{j};
             if row.segment == target.segment && row.row_id < rowId && row.current_sample_committed
                 state.current_time(end+1,1) = row.current_sample_time;
                 state.current_total(end+1,1) = row.current_sample_A;

@@ -58,6 +58,7 @@ classdef ExactStateDataset < handle
             manifest.configuration_sha256 = sha256_file(configPath);
             manifest.qp_audit_interval_steps = obj.AuditInterval;
             manifest.buffer_capacity_rows = numel(obj.Buffer);
+            manifest.storage_layout = 'packed_recursive_columns_v1';
             manifest.configuration_hash_kind = 'sha256_of_archived_mat_file_bytes';
             obj.Manifest = manifest;
             save(fullfile(obj.Root,'manifest','run.mat'), 'manifest', '-v7.3');
@@ -137,7 +138,8 @@ classdef ExactStateDataset < handle
             if isfile(target)
                 error('ExactStateDataset:Exists', 'Refusing to overwrite %s.',target);
             end
-            save(target,'rows','-v7.3');
+            packed_rows = pack_exact_state_rows(rows);
+            save(target,'packed_rows','-v7.3');
             info = dir(target);
             obj.Index(end+1,:) = {relative,first,last,obj.Count,info.bytes,sha256_file(target)};
             index = cell2table(obj.Index,'VariableNames', ...
