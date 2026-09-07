@@ -215,7 +215,11 @@ function context = localContext(state, metadata, baseIndex)
     else
         fsm = nan(4, 1);
     end
-    context.FSM = join(string(fsm(:).'), '');
+    if all(isfinite(fsm))
+        context.FSM = join(string(fsm(:).'), '');
+    else
+        context.FSM = "not_available_before_first_FSM_update";
+    end
     if isfield(state.fsm_internal_state, 'Ta') && ...
             isfield(state.fsm_internal_state, 'Tb')
         phase = (state.t-state.fsm_internal_state.Ta(:))./ ...

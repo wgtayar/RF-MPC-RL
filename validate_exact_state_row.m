@@ -13,6 +13,10 @@ function validate_exact_state_row(row, previous)
     if ~all(isfield(row.state_before,stateFields)) || ~all(isfield(row.state_after,stateFields))
         error('validate_exact_state_row:IncompleteState','Hidden state is incomplete.');
     end
+    if row.state_before.t > 0 && isempty(fieldnames(row.state_before.fsm_internal_state))
+        error('validate_exact_state_row:IncompleteState', ...
+            'Nonzero-time exact replay requires captured persistent FSM state.');
+    end
     validateattributes(row.Xt_qp,{'double'},{'numel',30});
     validateattributes(row.Ut_qp,{'double'},{'numel',12});
     validateattributes(row.FSM,{'double'},{'numel',4});
