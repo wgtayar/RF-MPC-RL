@@ -13,6 +13,11 @@ function [state, control, parameters] = restore_exact_dataset_state(root, rowId)
     state = saved.snapshot.state;
     control = saved.snapshot.control;
     parameters = saved.snapshot.parameters;
+    % Re-associating floating-point time arithmetic can change gait events.
+    % Retain the generating segment's time origin for exact interior replay.
+    if ~isfield(control,'integration_time_origin_s')
+        control.integration_time_origin_s = saved.snapshot.state.t;
+    end
     for k = 1:fileIndex
         rows = read_exact_state_rows(fullfile(root,index.file(k)));
         for j = 1:numel(rows)

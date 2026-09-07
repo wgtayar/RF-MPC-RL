@@ -22,6 +22,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
 
     dt = p.simTimeStep;
     numberSteps = max(0, round(options.duration_s/dt));
+    [stepTimes, nextTimes] = mpc_replay_time_grid(state.t,dt,numberSteps,control);
     traceRows = repmat(localEmptyTrace(), numberSteps, 1);
     traceCount = 0;
     failureProblem = struct();
@@ -29,7 +30,6 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     firstProblem = struct();
     terminalReason = "horizon_complete";
     initialState = state;
-    initialTime = state.t;
     chargeStart = localTrapzCharge(state.current_time, state.current_total);
     solveCount = 0;
     failedSolveCount = 0;
@@ -40,7 +40,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     end
 
     for iteration = 1:numberSteps
-        time = initialTime + dt*(iteration - 1);
+        time = stepTimes(iteration);
         if ~isempty(writer)
             exactBefore = compact_exact_mpc_state(state);
         end
@@ -152,7 +152,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             rethrow(exception)
         end
         state.Xt = stateHistory(end, :).';
-        state.t = initialTime + dt*iteration;
+        state.t = nextTimes(iteration);
 
         if capture
             traceRows(traceCount) = localTraceAfter( ...
