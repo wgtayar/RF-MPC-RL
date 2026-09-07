@@ -1,12 +1,17 @@
-function result = build_dynamic_viability_map(baseStates, baseMetadata, samples, cfg, outputFolder, horizonSeconds)
+function result = build_dynamic_viability_map(baseStates, baseMetadata, samples, cfg, outputFolder, horizonSeconds, datasetWriter, actionBounds)
 %build_dynamic_viability_map Evaluate conditional supervisory-action slices.
+
+    if nargin < 8 || ~isa(datasetWriter,'ExactStateDataset') || ...
+            ~isstruct(actionBounds) || ~all(isfield(actionBounds,{'lower','upper'}))
+        error('build_dynamic_viability_map:ExactCaptureRequired', ...
+            'New maps require an ExactStateDataset writer and explicit lower/upper R bounds.');
+    end
 
     if nargin < 3 || isempty(samples)
         samples = generate_phase2_action_samples(cfg);
     end
     if nargin < 5 || strlength(string(outputFolder)) == 0
-        outputFolder = fullfile(fileparts(mfilename('fullpath')), ...
-            'Phase 2 Outputs', 'dynamic_viability');
+        outputFolder = fullfile(datasetWriter.Root,'analysis');
     end
     if nargin < 6 || isempty(horizonSeconds)
         horizonSeconds = 0.05;
@@ -20,6 +25,10 @@ function result = build_dynamic_viability_map(baseStates, baseMetadata, samples,
             'Provide one metadata struct per base state.');
     end
     outputFolder = string(outputFolder);
+    if isfolder(outputFolder)
+        error('build_dynamic_viability_map:ExistingOutput', ...
+            'Refusing to overwrite an existing map output directory.');
+    end
     figureFolder = fullfile(outputFolder, 'figures');
     if ~isfolder(figureFolder)
         mkdir(figureFolder);
@@ -29,13 +38,11 @@ function result = build_dynamic_viability_map(baseStates, baseMetadata, samples,
     numberRows = numel(baseStates)*height(samples);
     rows = repmat(localEmptyRow(), numberRows, 1);
     executions = cell(numberRows, 1);
+    assessments = cell(numberRows, 1);
     contexts = repmat(localEmptyContext(), numel(baseStates), 1);
     rowIndex = 0;
-    p = get_params(0);
-    nominalR = diag(p.R);
-    nominalR = nominalR(1:3);
-    lowerR = 0.95*nominalR;
-    upperR = 1.05*nominalR;
+    lowerR = actionBounds.lower;
+    upperR = actionBounds.upper;
     actionRange = [2*cfg.DR_MAX, 2*cfg.DR_MAX, 2*cfg.DR_MAX, ...
         cfg.GAMMA_V_MAX-cfg.GAMMA_V_MIN, ...
         cfg.GAMMA_A_MAX-cfg.GAMMA_A_MIN];
@@ -67,39 +74,46 @@ function result = build_dynamic_viability_map(baseStates, baseMetadata, samples,
             options = struct('duration_s', horizonSeconds, ...
                 'solver_strategy', "default", 'capture_trace', true, ...
                 'classify_failure', true, 'update_proxy', true, ...
-                'update_battery', false);
+                'update_battery', true,'dataset_writer',datasetWriter, ...
+                'dataset_context',struct('episode',(baseIndex-1)*height(samples)+sampleIndex, ...
+                'decision',1,'chunk',1));
             [~, out] = simulate_mpc_horizon(baseState, control, cfg, options);
-            class = classify_dynamic_viability(initialMetrics, out, thresholds);
+            [class,assessment] = classify_dynamic_viability_v2(initialMetrics, out, thresholds);
             rowIndex = rowIndex + 1;
             rows(rowIndex) = localResultRow(context, samples(sampleIndex, :), ...
                 action, referenceAction, actionRange, candidateR, ...
                 vCommand, aCommand, out, class, initialMetrics, thresholds);
             executions{rowIndex} = execution;
+            assessments{rowIndex} = assessment;
         end
     end
 
     map = struct2table(rows);
     map = [map, supervisory_action_table(executions)];
     contextTable = struct2table(contexts);
-    safeMask = ismember(map.viability_class, [ ...
-        "healthy_robust_solver", "healthy_solver_stressed", ...
-        "degraded_recoverable"]);
-    map.safe_action = safeMask;
+    map.safe_action = cellfun(@(a) a.safe_for_policy,assessments);
+    map.recovery_candidate = cellfun(@(a) a.recovery_candidate,assessments);
+    map.within_envelope_at_horizon = cellfun(@(a) a.within_envelope_at_horizon,assessments);
+    map.minimum_health_margin = cellfun(@(a) a.minimum_health_margin,assessments);
+    map.horizon_seconds = repmat(horizonSeconds,height(map),1);
+    map.thresholds_validated = false(height(map),1);
     volume = groupsummary(map, {'base_id','base_label','sample_type','profile'}, ...
         'mean', 'safe_action');
     volume.Properties.VariableNames{end} = 'safe_action_fraction';
-    provenance = struct('source_git_sha', localGitSha(), ...
+    provenance = struct('source_git_sha', string(datasetWriter.Manifest.source_sha), ...
         'matlab_version', string(version), 'created_at', ...
         string(datetime('now', 'TimeZone', 'local')), ...
         'rng_seed', cfg.RNG_SEED, 'horizon_seconds', horizonSeconds, ...
         'reward_version', string(cfg.REWARD.version));
     provenance.action_schema_version = "action_v2_rate_limited";
+    provenance.viability_schema_version = "viability_v2_whole_horizon";
+    provenance.thresholds_validated = false;
     writetable(map, fullfile(outputFolder, 'dynamic_viability_samples.csv'));
     writetable(contextTable, fullfile(outputFolder, 'conditioning_states.csv'));
     writetable(volume, fullfile(outputFolder, 'safe_action_volume.csv'));
     save(fullfile(outputFolder, 'dynamic_viability_map.mat'), ...
         'map', 'contextTable', 'volume', 'baseStates', 'baseMetadata', ...
-        'samples', 'thresholds', 'horizonSeconds', 'provenance', 'executions', '-v7.3');
+        'samples', 'thresholds', 'horizonSeconds', 'provenance', 'executions', 'assessments', '-v7.3');
     localCreateFigures(map, contextTable, figureFolder);
     result = struct('map', map, 'conditioning_states', contextTable, ...
         'safe_action_volume', volume, 'thresholds', thresholds, ...
@@ -155,20 +169,20 @@ function row = localResultRow(context, sample, action, referenceAction, ...
         row.final_position_invariant_norm = ...
             last.position_invariant_norm_after;
         row.final_Ut_norm = last.Ut_norm_after;
-        finalScore = max([ ...
-            row.final_orientation_error_rad/thresholds.orientation, ...
-            row.final_angular_velocity/thresholds.angular_velocity, ...
-            row.final_position_invariant_norm/thresholds.position_invariant, ...
-            row.final_Ut_norm/thresholds.Ut]);
-    else
-        finalScore = 5;
     end
-    initialScore = max([initial.orientation/thresholds.orientation, ...
-        initial.angular_velocity/thresholds.angular_velocity, ...
-        initial.position_invariant/thresholds.position_invariant, ...
-        initial.Ut/thresholds.Ut]);
-    solverStress = max(row.solver_iterations_max/thresholds.solver_iterations, 0);
-    row.risk_score = max([finalScore, 0.5*initialScore, solverStress]);
+    before = out.trace{:,{'orientation_error_before_rad','angular_velocity_before', ...
+        'position_invariant_norm_before','Ut_norm_before'}};
+    after = out.trace{:,{'orientation_error_after_rad','angular_velocity_after', ...
+        'position_invariant_norm_after','Ut_norm_after'}};
+    health = [initial.orientation,initial.angular_velocity,initial.position_invariant,initial.Ut; ...
+        before;after];
+    if all(isfinite(health(:)))
+        normalized = health./[thresholds.orientation,thresholds.angular_velocity, ...
+            thresholds.position_invariant,thresholds.Ut];
+        row.risk_score = max([normalized(:); ...
+            row.solver_iterations_max/thresholds.solver_iterations; ...
+            row.solver_wall_time_max_s/out.mpc_timestep_s]);
+    end
 end
 
 function metrics = localInitialMetrics(state)
@@ -231,6 +245,11 @@ function localCreateFigures(map, contexts, figureFolder)
         baseRows = map(map.base_id == baseId, :);
         gammaRows = baseRows(baseRows.sample_type == "gamma_heatmap", :);
         profiles = unique(gammaRows.profile, 'stable');
+        if isempty(profiles)
+            gammaRows = baseRows;
+            gammaRows.profile(:) = "all_candidates";
+            profiles = "all_candidates";
+        end
         figureHandle = figure('Visible', 'off', 'Color', 'w', ...
             'Position', [100, 100, 1150, 380]);
         cleanupObj = onCleanup(@() close(figureHandle));
@@ -240,15 +259,19 @@ function localCreateFigures(map, contexts, figureFolder)
             nexttile;
             scatter(rows.gamma_v, rows.gamma_a, 90, rows.risk_score, 'filled');
             colorbar;
-            clim([0, max(2, max(rows.risk_score, [], 'omitnan'))]);
-            xlabel('\gamma_v');
-            ylabel('\gamma_a');
+            colorMaximum = max(rows.risk_score(isfinite(rows.risk_score)));
+            if isempty(colorMaximum)
+                colorMaximum = 2;
+            end
+            clim([0,max(2,colorMaximum)]);
+            xlabel('raw candidate \gamma_v');
+            ylabel('raw candidate \gamma_a');
             title(strrep(profiles(i), '_', ' '));
         end
-        titleText = sprintf('%s | t=%.3f SOC=%.2f%% omega=%.2f orient=%.2f Ut=%.2f FSM=%s', ...
+        titleText = sprintf('%s | t=%.3f SOC=%.2f%% omega=%.2f orient=%.2f Ut=%.2f FSM=%s | h=%g s n=%d | dynamic_state_v2 provisional', ...
             context.base_label, context.time_s, context.soc_pct, ...
             context.angular_velocity, context.orientation_error_rad, ...
-            context.Ut_norm, context.FSM);
+            context.Ut_norm, context.FSM,baseRows.horizon_seconds(1),height(baseRows));
         sgtitle(titleText, 'Interpreter', 'none');
         exportgraphics(figureHandle, fullfile(figureFolder, ...
             sprintf('base_%02d_gamma_slices.png', baseId)), 'Resolution', 160);
@@ -259,7 +282,7 @@ function localCreateFigures(map, contexts, figureFolder)
             35, double(baseRows.safe_action), 'filled');
         grid on;
         xlabel('normalized distance from conditioning policy action');
-        ylabel('continuation risk score');
+        ylabel('provisional normalized stress (not probability)');
         title(titleText, 'Interpreter', 'none');
         exportgraphics(figureHandle, fullfile(figureFolder, ...
             sprintf('base_%02d_risk_distance.png', baseId)), 'Resolution', 160);
@@ -296,13 +319,4 @@ function context = localEmptyContext()
         'angular_velocity', NaN, 'com_velocity', NaN, ...
         'position_invariant_norm', NaN, 'Ut_norm', NaN, ...
         'FSM', "", 'phase', "");
-end
-
-function sha = localGitSha()
-    [status, text] = system('git rev-parse HEAD');
-    if status == 0
-        sha = string(strtrim(text));
-    else
-        sha = "unknown";
-    end
 end

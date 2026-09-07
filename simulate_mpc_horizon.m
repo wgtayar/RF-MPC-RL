@@ -205,6 +205,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     out.terminal_reason = terminalReason;
     out.completed_horizon = terminalReason == "horizon_complete";
     out.requested_duration_s = options.duration_s;
+    out.mpc_timestep_s = dt;
     out.survived_duration_s = state.t - initialState.t;
     out.qp_solve_count = solveCount;
     out.qp_failed_count = failedSolveCount;
