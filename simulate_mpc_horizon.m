@@ -148,6 +148,14 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     if isfield(control, 'action')
         state.previous_action = control.action(:);
     end
+    if isfield(control, 'action_execution')
+        applied = control.action_execution;
+        state.supervisory_state = struct('last_R', applied.R_applied, ...
+            'v_req', applied.v_req, 'a_req', applied.a_req, ...
+            'v_exec', applied.v_exec, 'prev_gamma_v', applied.gamma_v_applied, ...
+            'prev_gamma_a', applied.gamma_a_applied, ...
+            'previous_applied_action', applied.applied_action);
+    end
 
     traceRows = traceRows(1:traceCount);
     if isempty(traceRows)

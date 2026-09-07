@@ -69,6 +69,8 @@ function [initialObs, logged] = rlResetFunction()
     logged.prev_gamma_v = gamma_v0;
 
     logged.prev_gamma_a = cfg.GAMMA_A_MIN;
+    logged.previous_applied_action = [zeros(3,1); gamma_v0; cfg.GAMMA_A_MIN];
+    logged.previous_candidate_action = logged.previous_applied_action;
     logged.prev_Ieq_window = 0;
     logged.distance_m = 0;
     logged.battery = battery;

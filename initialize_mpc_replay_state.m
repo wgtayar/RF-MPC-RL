@@ -45,7 +45,17 @@ function state = initialize_mpc_replay_state(cfg, gait)
         'n_parallel', cfg.BATTERY.n_parallel);
     rDiagonal = diag(p.R);
     state.R = rDiagonal(1:3);
-    state.previous_action = nan(5, 1);
+    gammaV = cfg.GAMMA_V_MISSION;
+    if isfield(cfg, 'START_HIGH') && cfg.START_HIGH.enable
+        gammaV = min(max(cfg.START_HIGH.gamma_v_init, ...
+            cfg.GAMMA_V_MIN), cfg.GAMMA_V_MAX);
+    end
+    state.previous_action = [zeros(3,1); gammaV; cfg.GAMMA_A_MIN];
+    state.supervisory_state = struct('last_R', state.R, ...
+        'v_req', cfg.V_REQ_FIXED, 'a_req', cfg.A_REQ_FIXED, ...
+        'v_exec', cfg.V_MIN+gammaV*(cfg.V_MAX-cfg.V_MIN), ...
+        'prev_gamma_v', gammaV, 'prev_gamma_a', cfg.GAMMA_A_MIN, ...
+        'previous_applied_action', state.previous_action);
     state.decision_bookkeeping = struct();
     state.mpc_warm_start = [];
 end

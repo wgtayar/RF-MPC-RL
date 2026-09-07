@@ -9,34 +9,25 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     lower_abs = S.lower_abs;
     upper_abs = S.upper_abs;
 
-    dR_frac_raw = action(1:3);
-    dR_frac = min(max(dR_frac_raw, -cfg.DR_MAX), cfg.DR_MAX);
-
-    gamma_v_raw = action(4);
-    gamma_a_raw = action(5);
-    gamma_a = gamma_a_raw;
-
+    actionExecution = resolve_supervisory_action( ...
+        action(:), logged, cfg, lower_abs, upper_abs);
+    dR_frac_raw = actionExecution.candidate_action(1:3);
+    dR_frac = actionExecution.dR_clipped;
+    gamma_v_raw = actionExecution.gamma_v_raw;
+    gamma_a_raw = actionExecution.gamma_a_raw;
+    gamma_v = actionExecution.gamma_v_applied;
+    gamma_a = actionExecution.gamma_a_applied;
     decision_idx = logged.step_idx + 1;
-
-    if isfield(cfg, 'DGAMMA_V_MAX') && isfield(logged, 'prev_gamma_v')
-        gamma_v = min(max(gamma_v_raw, logged.prev_gamma_v - cfg.DGAMMA_V_MAX), ...
-            logged.prev_gamma_v + cfg.DGAMMA_V_MAX);
-    else
-        gamma_v = gamma_v_raw;
-    end
-
-    gamma_v = min(max(gamma_v, cfg.GAMMA_V_MIN), cfg.GAMMA_V_MAX);
-    gamma_a = min(max(gamma_a, cfg.GAMMA_A_MIN), cfg.GAMMA_A_MAX);
 
     % High-start ablation is removed. Keep these fields for log-schema continuity.
     start_high_active = false;
     gamma_v_floor_active = NaN;
 
-    R_new = logged.last_R .* (1 + dR_frac);
-    R_new = min(max(R_new, lower_abs), upper_abs);
+    R_new = actionExecution.R_applied;
     R_all = repmat(R_new, [4, 1]);
 
-    [v_exec, a_exec] = apply_command_governor(logged.v_req, logged.a_req, gamma_v, gamma_a, cfg);
+    v_exec = actionExecution.v_exec;
+    a_exec = actionExecution.a_exec;
 
     total_chunks = cfg.EP_STEPS * cfg.APPLY_EVERY;
     soc_start = logged.battery.soc_pct;
@@ -74,6 +65,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
         diagnosticContext.R_applied = R_new(:).';
         diagnosticContext.v_exec = v_exec;
         diagnosticContext.a_exec = a_exec;
+        diagnosticContext.action_execution = actionExecution;
         if isfield(cfg, 'RUN') && isfield(cfg.RUN, 'run_id')
             diagnosticContext.run_id = cfg.RUN.run_id;
         end
@@ -371,6 +363,9 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     logged.a_exec = a_exec;
     logged.prev_gamma_v = gamma_v;
     logged.prev_gamma_a = gamma_a;
+    logged.previous_applied_action = actionExecution.applied_action;
+    logged.previous_candidate_action = actionExecution.candidate_action;
+    logged.action_execution = actionExecution;
     logged.prev_Ieq_window = Ieq_window;
     logged.distance_m = distance_next;
     logged.battery = battery;
