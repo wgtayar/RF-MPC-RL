@@ -17,6 +17,8 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     p.vel_d = [control.v_cmd; 0];
     p.acc_d = control.a_cmd;
     p.yaw_d = 0;
+    [state.reference_state, referenceOffset] = update_reference_position_offset(state,control);
+    p.reference_position_offset_m = referenceOffset;
 
     dt = p.simTimeStep;
     numberSteps = max(0, round(options.duration_s/dt));
@@ -68,6 +70,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
                     fcn_FSM(timeHorizon, state.Xt, p, ...
                     state.fsm_internal_state);
             end
+            Xd(1,:) = Xd(1,:)+referenceOffset;
             [H, g, Aineq, bineq, Aeq, beq] = ...
                 fcn_get_QP_form_eta(state.Xt, state.Ut, Xd, Ud, p);
         end
