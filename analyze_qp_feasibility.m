@@ -147,8 +147,17 @@ function result = localSolveJointRelaxation(result, Aineq, bineq, Aeq, beq, numb
     result.joint_relaxation_output = output;
     result.minimum_joint_scaled_relaxation_l1 = objectiveValue;
     result.joint_relaxation_solution = solution;
-    if exitflag > 0
-        result.classification = 'equality_and_or_inequality_relaxation_required';
+    if exitflag > 0 && ~isempty(solution)
+        z = solution(1:numberVariables);
+        residual = max([0; Aineq*z-bineq; abs(Aeq*z-beq)]);
+        if residual <= 1e-7
+            result.classification = 'linearly_feasible';
+            result.phase1_z = z;
+        elseif objectiveValue > 1e-7
+            result.classification = 'equality_and_or_inequality_relaxation_required';
+        else
+            result.classification = 'phase1_solver_failure';
+        end
     else
         result.classification = 'phase1_solver_failure';
     end

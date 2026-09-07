@@ -9,6 +9,7 @@ function result = solve_mpc_qp(problem, strategy, options)
     end
     strategy = string(strategy);
     classifyFailure = localOption(options, 'classify_failure', true);
+    totalTimer = tic;
 
     required = {'H','g','Aineq','bineq','Aeq','beq'};
     for i = 1:numel(required)
@@ -26,8 +27,34 @@ function result = solve_mpc_qp(problem, strategy, options)
     beq = problem.beq;
     result = localEmptyResult(strategy);
 
+    if strategy == "default_one_shot_fallback"
+        primaryOptions = options;
+        primaryOptions.classify_failure = true;
+        primary = solve_mpc_qp(problem, "default", primaryOptions);
+        result = primary;
+        if should_rescue_qp(primary)
+            rescueOptions = options;
+            rescueOptions.phase1 = primary.phase1;
+            rescue = solve_mpc_qp(problem, "active_set_feasible_point", rescueOptions);
+            result = rescue;
+            result.primary_attempt = primary;
+            result.fallback_attempted = true;
+            result.fallback_success = rescue.success;
+            result.fallback_wall_time_s = rescue.wall_time_s;
+            result.phase1_wall_time_s = primary.phase1_wall_time_s + rescue.phase1_wall_time_s;
+            result.quadprog_wall_time_s = primary.quadprog_wall_time_s + rescue.quadprog_wall_time_s;
+            if rescue.success
+                result.classification = "numerical_solver_failure_recovered";
+            end
+        end
+        result.strategy = strategy;
+        result.wall_time_s = toc(totalTimer);
+        return
+    end
+
     if any(~isfinite([H(:); g(:); Aineq(:); bineq(:); Aeq(:); beq(:)]))
         result.classification = "invalid_state";
+        result.wall_time_s = toc(totalTimer);
         return
     end
 
@@ -36,13 +63,19 @@ function result = solve_mpc_qp(problem, strategy, options)
             qpOptions = optimoptions('quadprog', 'Display', 'off');
             x0 = [];
         case "active_set_feasible_point"
-            phase = analyze_qp_feasibility(problem);
+            phaseTimer = tic;
+            phase = localOption(options, 'phase1', struct());
+            if isempty(fieldnames(phase))
+                phase = localAnalyze(problem);
+            end
+            result.phase1_wall_time_s = toc(phaseTimer);
             result.phase1 = phase;
             acceptedPhaseClasses = ...
                 ["solver_difficulty_or_objective_numerics", "linearly_feasible"];
             if ~isfield(phase, 'phase1_z') || ...
                     ~any(string(phase.classification) == acceptedPhaseClasses)
                 result.classification = localPhaseClassification(phase);
+                result.wall_time_s = toc(totalTimer);
                 return
             end
             x0 = phase.phase1_z;
@@ -52,11 +85,13 @@ function result = solve_mpc_qp(problem, strategy, options)
             error('solve_mpc_qp:UnknownStrategy', ...
                 'Unknown QP strategy "%s".', strategy);
     end
+    result.solver_options = qpOptions;
+    result.initial_point = x0;
 
     solveTimer = tic;
     [z, objective, exitflag, output, lambda] = quadprog( ...
         H, g, Aineq, bineq, Aeq, beq, [], [], x0, qpOptions);
-    result.wall_time_s = toc(solveTimer);
+    result.quadprog_wall_time_s = toc(solveTimer);
     result.z = z;
     result.objective = objective;
     result.exitflag = exitflag;
@@ -66,7 +101,13 @@ function result = solve_mpc_qp(problem, strategy, options)
     result.first_order_opt = localOutputValue(output, 'firstorderopt');
     result.constraint_violation = localOutputValue(output, 'constrviolation');
 
-    if exitflag > 0 && ~isempty(z)
+    validSolution = exitflag > 0 && numel(z) == numel(g) && all(isfinite(z));
+    if validSolution
+        tolerance = localOption(options, 'solution_constraint_tolerance', 1e-6);
+        validSolution = all(Aineq*z-bineq <= tolerance) && ...
+            all(abs(Aeq*z-beq) <= tolerance);
+    end
+    if validSolution
         result.success = true;
         result.classification = "solver_success";
         result.diagnostics = compute_qp_diagnostics( ...
@@ -76,12 +117,15 @@ function result = solve_mpc_qp(problem, strategy, options)
         result.kkt_complementarity_inf = localComplementarityResidual( ...
             Aineq, bineq, z, lambda);
     elseif classifyFailure
-        phase = analyze_qp_feasibility(problem);
+        phaseTimer = tic;
+        phase = localAnalyze(problem);
+        result.phase1_wall_time_s = result.phase1_wall_time_s + toc(phaseTimer);
         result.phase1 = phase;
         result.classification = localPhaseClassification(phase);
     else
-        result.classification = "numerical_solver_failure";
+        result.classification = "unclassified_solver_failure";
     end
+    result.wall_time_s = toc(totalTimer);
 end
 
 function result = localEmptyResult(strategy)
@@ -96,6 +140,10 @@ function result = localEmptyResult(strategy)
         'lambda', struct(), ...
         'iterations', NaN, ...
         'wall_time_s', NaN, ...
+        'quadprog_wall_time_s', 0, 'phase1_wall_time_s', 0, ...
+        'fallback_attempted', false, 'fallback_success', false, ...
+        'fallback_wall_time_s', 0, 'primary_attempt', struct(), ...
+        'solver_options', [], 'initial_point', [], ...
         'first_order_opt', NaN, ...
         'constraint_violation', NaN, ...
         'kkt_stationarity_inf', NaN, ...
@@ -127,8 +175,20 @@ function classification = localPhaseClassification(phase)
         classification = "mathematical_constraint_infeasible";
     elseif phaseClass == "invalid_problem_data"
         classification = "invalid_state";
-    else
+    elseif any(phaseClass == ["linearly_feasible", "solver_difficulty_or_objective_numerics"])
         classification = "numerical_solver_failure";
+    else
+        classification = "unclassified_solver_failure";
+    end
+end
+
+function phase = localAnalyze(problem)
+    try
+        phase = analyze_qp_feasibility(problem);
+    catch exception
+        phase = struct('classification', "phase1_solver_failure", ...
+            'exception_identifier', string(exception.identifier), ...
+            'exception_message', string(exception.message));
     end
 end
 
