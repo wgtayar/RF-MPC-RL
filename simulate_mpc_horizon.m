@@ -31,9 +31,17 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     chargeStart = localTrapzCharge(state.current_time, state.current_total);
     solveCount = 0;
     failedSolveCount = 0;
+    writer = options.dataset_writer;
+    if ~isempty(writer)
+        writer.beginSegment(state, options.dataset_context, p, control);
+        datasetCleanup = onCleanup(@() writer.flush());
+    end
 
     for iteration = 1:numberSteps
         time = initialTime + dt*(iteration - 1);
+        if ~isempty(writer)
+            exactBefore = compact_exact_mpc_state(state);
+        end
         useOverride = iteration == 1 && ...
             ~isempty(fieldnames(options.initial_problem_override));
         if useOverride
@@ -89,6 +97,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         strategy = localStrategy(options, time);
         solverOptions = struct('classify_failure', options.classify_failure);
         solver = solve_mpc_qp(problem, strategy, solverOptions);
+        solver.problem_override_used = useOverride;
         solveCount = solveCount + 1;
 
         capture = options.capture_trace && time >= options.trace_start_time_s;
@@ -111,6 +120,11 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             failureProblem.fsm_internal_state = state.fsm_internal_state;
             failureProblem.time_s = time;
             failureSolver = solver;
+            if ~isempty(writer)
+                localCapture(writer, exactBefore, state, time, iteration, ...
+                    XtQp, UtQp, Xd, Ud, FSM, solver, problem, ...
+                    control, kneeCurrent, false, false);
+            end
             break
         end
 
@@ -118,9 +132,22 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         [uExt, pExt] = fcn_get_disturbance(time, p);
         p.p_ext = pExt;
         uExt = 0*uExt;
-        [~, stateHistory] = ode45( ...
-            @(t, X) dynamics_SRB(t, X, state.Ut, Xd, uExt, p), ...
-            [time, time + dt], state.Xt);
+        try
+            [~, stateHistory] = ode45( ...
+                @(t, X) dynamics_SRB(t, X, state.Ut, Xd, uExt, p), ...
+                [time, time + dt], state.Xt);
+        catch exception
+            if ~isempty(writer)
+                solver.integration_exception = struct('identifier',exception.identifier, ...
+                    'message',exception.message);
+                localCapture(writer, exactBefore, state, time, iteration, ...
+                    XtQp, UtQp, Xd, Ud, FSM, solver, problem, ...
+                    control, kneeCurrent, false, false);
+                writer.endSegment(state,struct('terminal_reason','integration_exception', ...
+                    'exception',solver.integration_exception));
+            end
+            rethrow(exception)
+        end
         state.Xt = stateHistory(end, :).';
         state.t = initialTime + dt*iteration;
 
@@ -130,12 +157,22 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         end
         if any(~isfinite(state.Xt))
             terminalReason = "invalid_state";
+            if ~isempty(writer)
+                localCapture(writer, exactBefore, state, time, iteration, ...
+                    XtQp, UtQp, Xd, Ud, FSM, solver, problem, ...
+                    control, kneeCurrent, true, false);
+            end
             break
         end
 
         if options.update_battery && isfinite(kneeCurrent)
             state.current_time(end+1, 1) = time;
             state.current_total(end+1, 1) = kneeCurrent;
+        end
+        if ~isempty(writer)
+            localCapture(writer, exactBefore, state, time, iteration, ...
+                XtQp, UtQp, Xd, Ud, FSM, solver, problem, ...
+                control, kneeCurrent, true, options.update_battery && isfinite(kneeCurrent));
         end
     end
 
@@ -179,6 +216,9 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     out.charge_As = localTrapzCharge( ...
         state.current_time, state.current_total) - chargeStart;
     out.Ieq_A = out.charge_As/max(out.survived_duration_s, eps);
+    if ~isempty(writer)
+        writer.endSegment(state, out);
+    end
 end
 
 function options = localDefaults(options, cfg)
@@ -192,6 +232,31 @@ function options = localDefaults(options, cfg)
     options = localSetDefault(options, 'initial_problem_override', struct());
     options = localSetDefault(options, 'update_proxy', true);
     options = localSetDefault(options, 'update_battery', false);
+    options = localSetDefault(options, 'dataset_writer', []);
+    options = localSetDefault(options, 'dataset_context', struct());
+end
+
+function localCapture(writer, before, state, time, iteration, ...
+        XtQp, UtQp, Xd, Ud, FSM, solver, problem, control, current, integrated, committed)
+    healthBefore = exact_mpc_health(XtQp,UtQp,Xd);
+    healthAfter = exact_mpc_health(state.Xt,state.Ut,Xd);
+    dynamicEvent = ~healthAfter.valid || isfield(solver,'integration_exception');
+    if healthAfter.valid
+        % Provisional audit triggers, not calibrated safety/termination labels.
+        dynamicEvent = dynamicEvent || healthAfter.components.orientation_error_rad > 1 || ...
+            healthAfter.components.angular_velocity_norm > 10 || healthAfter.Ut_norm > 100;
+    end
+    row = struct('time_before',time,'time_after',state.t,'iteration',iteration, ...
+        'state_before',before,'state_after',compact_exact_mpc_state(state), ...
+        'Xt_qp',XtQp,'Ut_qp',UtQp,'Xd',Xd,'Ud',Ud,'FSM',FSM, ...
+        'fsm_after',state.fsm_internal_state,'solver',solver, ...
+        'health_before',healthBefore,'health_after',healthAfter, ...
+        'dynamic_event',dynamicEvent,'integrated',integrated, ...
+        'dynamic_event_definition','provisional_phase2_audit_trigger_not_safety_label', ...
+        'current_sample_A',current,'current_sample_time',time, ...
+        'current_sample_committed',committed,'action_execution',control.action_execution, ...
+        'rcond_H',rcond(problem.H),'rank_Aeq',rank(problem.Aeq));
+    writer.append(row,problem);
 end
 
 function value = localSetDefault(value, field, defaultValue)
