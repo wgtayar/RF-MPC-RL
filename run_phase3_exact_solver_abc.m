@@ -1,10 +1,14 @@
-function reports = run_phase3_exact_solver_abc(sourceDataset, rowId, outputRoot, durationSeconds)
+function reports = run_phase3_exact_solver_abc(sourceDataset, rowId, outputRoot, durationSeconds, tightRescue)
 %run_phase3_exact_solver_abc Captured solver-only branches at an exact failed row.
 % Frozen supervisory action; chunk battery timing is retained. This is a local
 % continuation, not a full policy/mission evaluation or calibrated safety test.
     if nargin < 4
         durationSeconds = 10;
     end
+    if nargin < 5
+        tightRescue = false;
+    end
+    validateattributes(tightRescue,{'logical'},{'scalar'});
     validateattributes(durationSeconds,{'double'},{'scalar','real','finite','positive'});
     source = bootstrap_RF_MPC_RL();
     assert(~isfolder(outputRoot) && ~isfile(outputRoot), ...
@@ -28,6 +32,9 @@ function reports = run_phase3_exact_solver_abc(sourceDataset, rowId, outputRoot,
     assert(initial.t+durationSeconds <= cfg.MISSION_DURATION, ...
         'solverABC:MissionBoundary','Continuation must not extend beyond the mission time limit.');
     strategies = {'default','default_one_shot_fallback','active_set_feasible_point'};
+    if tightRescue
+        strategies(2:3) = {'default_one_shot_fallback_tight_primal_v1','active_set_tight_primal_v1'};
+    end
     branchNames = {'A_default','B_one_shot','C_active_set'};
     reports = cell(3,1);
     for branch = 1:3
@@ -110,7 +117,8 @@ function sequence = localSolverSequence(root)
         for j = 1:numel(rows)
             n = n+1;
             solver = rows{j}.solver;
-            defaultAttempt = any(strcmp(solver.strategy,{'default','default_one_shot_fallback'}));
+            defaultAttempt = any(strcmp(solver.strategy, ...
+                {'default','default_one_shot_fallback','default_one_shot_fallback_tight_primal_v1'}));
             defaultSuccess = defaultAttempt && solver.success && ~solver.fallback_attempted;
             data(n,:) = [rows{j}.time_before,defaultAttempt,defaultSuccess, ...
                 solver.fallback_attempted,solver.fallback_success,solver.fallback_wall_time_s];

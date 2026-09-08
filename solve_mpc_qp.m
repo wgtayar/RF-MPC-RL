@@ -27,7 +27,7 @@ function result = solve_mpc_qp(problem, strategy, options)
     beq = problem.beq;
     result = localEmptyResult(strategy);
 
-    if strategy == "default_one_shot_fallback"
+    if any(strategy == ["default_one_shot_fallback","default_one_shot_fallback_tight_primal_v1"])
         primaryOptions = options;
         primaryOptions.classify_failure = true;
         primary = solve_mpc_qp(problem, "default", primaryOptions);
@@ -35,7 +35,11 @@ function result = solve_mpc_qp(problem, strategy, options)
         if should_rescue_qp(primary)
             rescueOptions = options;
             rescueOptions.phase1 = primary.phase1;
-            rescue = solve_mpc_qp(problem, "active_set_feasible_point", rescueOptions);
+            rescueStrategy = "active_set_feasible_point";
+            if strategy == "default_one_shot_fallback_tight_primal_v1"
+                rescueStrategy = "active_set_tight_primal_v1";
+            end
+            rescue = solve_mpc_qp(problem, rescueStrategy, rescueOptions);
             result = rescue;
             result.primary_attempt = primary;
             result.fallback_attempted = true;
@@ -62,7 +66,7 @@ function result = solve_mpc_qp(problem, strategy, options)
         case "default"
             qpOptions = optimoptions('quadprog', 'Display', 'off');
             x0 = [];
-        case "active_set_feasible_point"
+        case {"active_set_feasible_point","active_set_tight_primal_v1"}
             phaseTimer = tic;
             phase = localOption(options, 'phase1', struct());
             if isempty(fieldnames(phase))
@@ -81,6 +85,9 @@ function result = solve_mpc_qp(problem, strategy, options)
             x0 = phase.phase1_z;
             qpOptions = optimoptions('quadprog', 'Display', 'off', ...
                 'Algorithm', 'active-set', 'MaxIterations', 5000);
+            if strategy == "active_set_tight_primal_v1"
+                qpOptions.ConstraintTolerance = 1e-10;
+            end
         otherwise
             error('solve_mpc_qp:UnknownStrategy', ...
                 'Unknown QP strategy "%s".', strategy);

@@ -1,6 +1,7 @@
 classdef testPhase3SolverPolicy < matlab.unittest.TestCase
     properties (TestParameter)
-        Strategy = {"default", "active_set_feasible_point", "default_one_shot_fallback"}
+        Strategy = {"default", "active_set_feasible_point", "default_one_shot_fallback", ...
+            "active_set_tight_primal_v1", "default_one_shot_fallback_tight_primal_v1"}
         NonRescuable = {"unclassified_solver_failure", "invalid_state", ...
             "mathematical_constraint_infeasible"}
     end
@@ -44,6 +45,20 @@ classdef testPhase3SolverPolicy < matlab.unittest.TestCase
             testCase.verifyFalse(should_rescue_qp(r));
             r.phase1 = struct();
             testCase.verifyFalse(should_rescue_qp(r));
+        end
+        function tightStrategyRetainsStrictPrimalGate(testCase)
+            result = solve_mpc_qp(testCase.problem(),"active_set_tight_primal_v1");
+            testCase.verifyEqual(result.solver_options.ConstraintTolerance,1e-10);
+            testCase.verifyTrue(result.success);
+            testCase.verifyLessThanOrEqual(result.constraint_violation,1e-6);
+        end
+        function tightFallbackStartsWithUnchangedDefault(testCase)
+            result = solve_mpc_qp(testCase.problem(),"default_one_shot_fallback_tight_primal_v1");
+            standard = solve_mpc_qp(testCase.problem(),"default");
+            testCase.verifyFalse(result.fallback_attempted);
+            testCase.verifyEqual(result.z,standard.z);
+            testCase.verifyEqual(result.solver_options.ConstraintTolerance, ...
+                standard.solver_options.ConstraintTolerance);
         end
     end
     methods (Static, Access = private)
