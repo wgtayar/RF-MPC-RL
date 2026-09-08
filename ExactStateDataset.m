@@ -174,6 +174,13 @@ classdef ExactStateDataset < handle
             obj.Buffer(:) = {[]};
             obj.Count = 0;
         end
+        function row = lastRow(obj)
+            % MATLAB value semantics prevent callers from mutating the writer.
+            row = obj.PreviousRow;
+            if isempty(row)
+                row = struct();
+            end
+        end
         function finish(obj, status)
             obj.requireOpen();
             obj.flush();

@@ -44,14 +44,23 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 all(bundle.initial_R(:) >= bundle.lower_abs(:)) && ...
                 all(bundle.initial_R(:) <= bundle.upper_abs(:)), ...
                 'Phase3MpcEnvironment:Bounds','Initial R must be inside ordered, nondegenerate bounds.');
-            observationInfo = rlNumericSpec([19,1],'Name','observations');
+            observationSchema = 'observation_v1_legacy';
+            observationDimension = 19;
+            if isfield(options,'observation_schema')
+                observationSchema = options.observation_schema;
+            end
+            if ~strcmp(observationSchema,'observation_v1_legacy')
+                v2 = phase3_observation_v2_schema(cfg);
+                observationDimension = v2.dimension;
+            end
+            observationInfo = rlNumericSpec([observationDimension,1],'Name','observations');
             actionInfo = rlNumericSpec([5,1], ...
                 'LowerLimit',[-cfg.DR_MAX*ones(3,1);cfg.GAMMA_V_MIN;cfg.GAMMA_A_MIN], ...
                 'UpperLimit',[cfg.DR_MAX*ones(3,1);cfg.GAMMA_V_MAX;cfg.GAMMA_A_MAX], ...
                 'Name','supervisory_candidate');
             obj = obj@rl.env.MATLABEnvironment(observationInfo,actionInfo);
             cfg.PHASE3 = struct('environment_version','phase3_captured_environment_v1', ...
-                'observation_schema','observation_v1_legacy', ...
+                'observation_schema',observationSchema, ...
                 'reward_version','reward_phase3_legacy_bridge_v1', ...
                 'training_promoted',false,'reset_R_each_episode',true, ...
                 'options',options,'initial_R',bundle.initial_R(:), ...
@@ -97,8 +106,14 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 'initial_position_x',obj.State.Xt(1),'distance_m',0, ...
                 'prev_Ieq_window',0,'a_exec',aReq,'observation',observation, ...
                 'reset_stream_state',obj.ResetStream.State);
+            observationAudit = struct();
+            if obj.usesObservationV2()
+                [observation,observationAudit] = build_phase3_observation_v2(obj.State,observation,struct(),cfg);
+                obj.Observation = observation;
+                obj.State.decision_bookkeeping.observation = observation;
+            end
             record = struct('state',obj.State,'observation',observation, ...
-                'lifecycle_reason','reset','rng_state',rng);
+                'lifecycle_reason','reset','rng_state',rng,'observation_audit',observationAudit);
             obj.Writer.writeEpisode(obj.Episode,'start',record);
         end
 
@@ -115,7 +130,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 [chunks,terminal] = obj.advanceDecision(control);
                 window = phase3_decision_window(before,obj.State,chunks,control,obj.Config,terminal);
                 [reward,rewardInfo] = compute_phase3_reward_bridge(window,obj.Config);
-                observation = obj.observeWindow(window,control);
+                [observation,observationAudit] = obj.observeWindow(window,control);
                 assert(isfinite(reward) && all(isfinite(observation)), ...
                     'Phase3MpcEnvironment:NonfiniteTransition','Reward/observation must be finite.');
                 obj.Observation = observation;
@@ -132,7 +147,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                     'is_done',isDone,'window',window,'first_mpc_row',firstRow, ...
                     'last_mpc_row',obj.Writer.RowCount,'chunks_completed',numel(chunks), ...
                     'rng_state',rng,'safety_mapping','none_candidate_semantics', ...
-                    'projection_enabled',false,'projection_distance',0);
+                    'projection_enabled',false,'projection_distance',0,'observation_audit',observationAudit);
                 obj.Writer.writeDecision(obj.Episode,obj.Decision,info);
                 obj.LastTransition = info;
                 if isDone
@@ -209,7 +224,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             chunks = chunks(1:k);
         end
 
-        function observation = observeWindow(obj,window,control)
+        function [observation,audit] = observeWindow(obj,window,control)
             cfg = obj.Config;
             observation = build_rl_observation( ...
                 window.tracking_error_mean/cfg.TRACK_REF,window.control_effort_mean/cfg.EFFORT_REF, ...
@@ -218,6 +233,14 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 window.com_speed_mag,window.tst_ratio,window.state_norm_proxy,window.fsm_proxy, ...
                 control.action_execution.gamma_v_applied,control.action_execution.gamma_a_applied, ...
                 window.Ieq_window);
+            audit = struct();
+            if obj.usesObservationV2()
+                [observation,audit] = build_phase3_observation_v2(obj.State,observation,obj.Writer.lastRow(),cfg);
+            end
+        end
+
+        function enabled = usesObservationV2(obj)
+            enabled = ~strcmp(obj.Config.PHASE3.observation_schema,'observation_v1_legacy');
         end
 
         function [vReq,aReq] = sampleRequest(obj)
@@ -245,7 +268,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
 end
 
 function options = localOptions(options)
-    assert(all(ismember(fieldnames(options),{'reference_mode','solver_strategy'})), ...
+    assert(all(ismember(fieldnames(options),{'reference_mode','solver_strategy','observation_schema'})), ...
         'Phase3MpcEnvironment:Options','Only explicit reference and solver options are supported.');
     if ~isfield(options,'reference_mode')
         options.reference_mode = 'legacy_absolute_time';
@@ -256,5 +279,10 @@ function options = localOptions(options)
     options.reference_mode = validatestring(options.reference_mode, ...
         {'legacy_absolute_time','position_continuous_v1'});
     options.solver_strategy = validatestring(options.solver_strategy, ...
-        {'default','default_one_shot_fallback','active_set_feasible_point'});
+        {'default','default_one_shot_fallback','active_set_feasible_point', ...
+        'default_one_shot_fallback_tight_primal_v1','active_set_tight_primal_v1'});
+    if isfield(options,'observation_schema')
+        options.observation_schema = validatestring(options.observation_schema, ...
+            {'observation_v1_legacy','observation_v2_dynamic_health_candidate_v1'});
+    end
 end
