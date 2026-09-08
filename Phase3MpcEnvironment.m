@@ -2,7 +2,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
     %Phase3MpcEnvironment Isolated, fully captured supervisory RL interface.
     % Constructor inputs are an explicit runtime bundle, new dataset path,
     % provenance metadata and optional reference_mode/solver_strategy options.
-    % Uses legacy observation and a comparison-only reward bridge. This is
+    % Uses an explicit observation schema and a comparison-only reward bridge. This is
     % not promoted for training until observation/reward/viability gates pass.
     properties (SetAccess = private)
         State = struct()
@@ -50,7 +50,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 observationSchema = options.observation_schema;
             end
             if ~strcmp(observationSchema,'observation_v1_legacy')
-                v2 = phase3_observation_v2_schema(cfg);
+                v2 = phase3_observation_v2_schema(cfg,observationSchema);
                 observationDimension = v2.dimension;
             end
             observationInfo = rlNumericSpec([observationDimension,1],'Name','observations');
@@ -108,7 +108,8 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 'reset_stream_state',obj.ResetStream.State);
             observationAudit = struct();
             if obj.usesObservationV2()
-                [observation,observationAudit] = build_phase3_observation_v2(obj.State,observation,struct(),cfg);
+                [observation,observationAudit] = build_phase3_observation_v2(obj.State,observation,struct(), ...
+                    cfg,cfg.PHASE3.observation_schema);
                 obj.Observation = observation;
                 obj.State.decision_bookkeeping.observation = observation;
             end
@@ -235,7 +236,8 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 window.Ieq_window);
             audit = struct();
             if obj.usesObservationV2()
-                [observation,audit] = build_phase3_observation_v2(obj.State,observation,obj.Writer.lastRow(),cfg);
+                [observation,audit] = build_phase3_observation_v2(obj.State,observation,obj.Writer.lastRow(), ...
+                    cfg,cfg.PHASE3.observation_schema);
             end
         end
 
@@ -283,6 +285,7 @@ function options = localOptions(options)
         'default_one_shot_fallback_tight_primal_v1','active_set_tight_primal_v1'});
     if isfield(options,'observation_schema')
         options.observation_schema = validatestring(options.observation_schema, ...
-            {'observation_v1_legacy','observation_v2_dynamic_health_candidate_v1'});
+            {'observation_v1_legacy','observation_v2_dynamic_health_candidate_v1', ...
+            'observation_v2_dynamic_health_candidate_v2'});
     end
 end

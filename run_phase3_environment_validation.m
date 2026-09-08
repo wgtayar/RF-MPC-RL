@@ -30,7 +30,7 @@ function report = run_phase3_environment_validation(outputRoot, shortProbe, obse
     expectedDimension = 19;
     if ~strcmp(observationSchema,'observation_v1_legacy')
         options.observation_schema = observationSchema;
-        schema = phase3_observation_v2_schema(bundle.cfg);
+        schema = phase3_observation_v2_schema(bundle.cfg,observationSchema);
         expectedDimension = schema.dimension;
     end
     env = Phase3MpcEnvironment(bundle,outputRoot,metadata,options);

@@ -1,10 +1,13 @@
-function [observation,audit] = build_phase3_observation_v2(state,legacyObservation,lastRow,cfg)
+function [observation,audit] = build_phase3_observation_v2(state,legacyObservation,lastRow,cfg,version)
 %build_phase3_observation_v2 Versioned health observation without global state norm.
 % lastRow is the last already executed MPC row, never a future/predicted label.
 % An empty lastRow is allowed only at reset. Legacy observations are not changed.
     validateattributes(legacyObservation,{'double'},{'numel',19,'real','finite'});
     legacyObservation = legacyObservation(:);
-    schema = phase3_observation_v2_schema(cfg);
+    if nargin < 5
+        version = 'observation_v2_dynamic_health_candidate_v1';
+    end
+    schema = phase3_observation_v2_schema(cfg,version);
     hasSolver = ~isempty(fieldnames(lastRow));
     assert(hasSolver || state.t==0,'observationV2:MissingHistory', ...
         'Nonzero-time observations require the actual previous MPC row.');
@@ -15,11 +18,17 @@ function [observation,audit] = build_phase3_observation_v2(state,legacyObservati
             'observationV2:Endpoint','Previous MPC row must match this exact endpoint, not a future sample.');
     end
     book = state.decision_bookkeeping;
-    progress = max(0,state.Xt(1)-book.initial_position_x)/cfg.MISSION.D_TARGET_M;
+    progress = NaN;
+    if isreal(state.Xt(1)) && isfinite(state.Xt(1))
+        progress = max(0,state.Xt(1)-book.initial_position_x)/cfg.MISSION.D_TARGET_M;
+    end
     timeFraction = state.t/cfg.MISSION_DURATION;
     base = [legacyObservation(schema.legacy_indices);progress-timeFraction;1-timeFraction];
     physical = nan(22,1);
     validState = isreal(state.Xt) && isreal(state.Ut) && all(isfinite([state.Xt(:);state.Ut(:)]));
+    if hasSolver
+        validState = validState && isreal(lastRow.Xd) && all(isfinite(lastRow.Xd(:)));
+    end
     if validState
         rotation = reshape(state.Xt(7:15),3,3);
         desiredRotation = eye(3);
@@ -80,6 +89,7 @@ function [observation,audit] = build_phase3_observation_v2(state,legacyObservati
     end
     raw = [base;physical;fsm;actions;solver;classes; ...
         validState;hasSolver;hasFsm;hasAction;hasMargin];
+    raw = raw(schema.raw_indices);
     assert(numel(raw)==schema.dimension,'observationV2:Dimension','Feature dimension mismatch.');
     available = isfinite(raw);
     encoded = raw;
@@ -88,6 +98,7 @@ function [observation,audit] = build_phase3_observation_v2(state,legacyObservati
     observation(schema.identity_transform) = encoded(schema.identity_transform);
     audit = struct('schema',schema,'raw',raw,'available',available, ...
         'clipped',false(size(raw)),'legacy_observation',legacyObservation, ...
+        'previous_solver_wall_seconds',solver(3), ...
         'clipping_scope','No additional clipping in v2; retained legacy features keep their historical normalization.', ...
         'reference_semantics', ...
         'Previous executed QP reference; reset orientation uses world identity and velocity error is unavailable.');

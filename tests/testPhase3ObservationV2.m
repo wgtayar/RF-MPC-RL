@@ -108,5 +108,46 @@ classdef testPhase3ObservationV2 < matlab.unittest.TestCase
             testCase.verifyError(@() build_phase3_observation_v2(testCase.State,testCase.Legacy,row,testCase.Bundle.cfg), ...
                 'observationV2:Endpoint');
         end
+        function timingFreeVersionPreservesOtherInputs(testCase)
+            [old,audit] = build_phase3_observation_v2(testCase.State,testCase.Legacy,testCase.Row,testCase.Bundle.cfg);
+            [current,info] = build_phase3_observation_v2(testCase.State,testCase.Legacy,testCase.Row,testCase.Bundle.cfg, ...
+                'observation_v2_dynamic_health_candidate_v2');
+            testCase.verifySize(old,[77 1]);
+            testCase.verifySize(current,[76 1]);
+            testCase.verifyEqual(current,old(audit.schema.names~="solver_wall_seconds"));
+            testCase.verifyEqual(info.previous_solver_wall_seconds,testCase.Row.solver.wall_time_s);
+        end
+        function timingFreeInputsIgnoreWallClock(testCase)
+            row = testCase.Row;
+            row.solver.wall_time_s = 100*row.solver.wall_time_s;
+            original = build_phase3_observation_v2(testCase.State,testCase.Legacy,testCase.Row,testCase.Bundle.cfg, ...
+                'observation_v2_dynamic_health_candidate_v2');
+            changed = build_phase3_observation_v2(testCase.State,testCase.Legacy,row,testCase.Bundle.cfg, ...
+                'observation_v2_dynamic_health_candidate_v2');
+            testCase.verifyEqual(changed,original);
+        end
+        function environmentSelectsTimingFreeVersion(testCase)
+            metadata = struct('run_id','v2_unit','run_type','unit_no_rollout','monitor_root',pwd, ...
+                'seed',testCase.Bundle.cfg.RNG_SEED,'source_policy','none');
+            env = Phase3MpcEnvironment(testCase.Bundle,fullfile(testCase.Folder,'v2'),metadata, ...
+                struct('observation_schema','observation_v2_dynamic_health_candidate_v2'));
+            testCase.verifySize(reset(env),[76 1]);
+            testCase.verifyEqual(env.Config.PHASE3.observation_schema,'observation_v2_dynamic_health_candidate_v2');
+            close(env,'unit_test');
+        end
+        function complexTerminalStateRemainsFinite(testCase)
+            state = testCase.State;
+            state.Xt(1) = 1+1i;
+            row = testCase.Row;
+            row.state_after = state;
+            [obs,audit] = build_phase3_observation_v2(state,testCase.Legacy,row,testCase.Bundle.cfg, ...
+                'observation_v2_dynamic_health_candidate_v2');
+            testCase.verifyTrue(isreal(obs) && all(isfinite(obs)));
+            testCase.verifyEqual(obs(audit.schema.names=="dynamic_state_valid"),0);
+        end
+        function unknownVersionRejected(testCase)
+            testCase.verifyError(@() phase3_observation_v2_schema(testCase.Bundle.cfg,'invented_schema'), ...
+                'MATLAB:unrecognizedStringChoice');
+        end
     end
 end
