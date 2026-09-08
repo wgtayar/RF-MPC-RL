@@ -34,10 +34,13 @@ classdef ExactStateDataset < handle
             mkdir(obj.Root);
             [~, attributes] = fileattrib(obj.Root);
             obj.Root = attributes.Name;
-            folders = {'manifest','mpc_steps','snapshots','failures','checksums'};
+            folders = {'manifest','mpc_steps','snapshots','failures','checksums','episodes','decisions'};
             for k = 1:numel(folders)
                 mkdir(fullfile(obj.Root, folders{k}));
             end
+            index = cell2table(obj.Index,'VariableNames', ...
+                {'file','first_row','last_row','row_count','bytes','sha256'});
+            writetable(index,fullfile(obj.Root,'mpc_steps','index.csv'));
             configPath = fullfile(obj.Root, 'manifest', 'configuration.mat');
             save(configPath, 'cfg', '-v7.3');
             source = fileparts(mfilename('fullpath'));
@@ -126,6 +129,29 @@ classdef ExactStateDataset < handle
             filename = sprintf('segment_%06d_after.mat',obj.Segment);
             save(fullfile(obj.Root,'snapshots',filename), 'snapshot', '-v7.3');
         end
+        function writeEpisode(obj, episode, stage, record)
+            validateattributes(episode,{'numeric'},{'scalar','integer','positive'});
+            stage = validatestring(stage,{'start','end'});
+            assert(all(isfield(record,{'state','observation','lifecycle_reason'})), ...
+                'ExactStateDataset:EpisodeRecord','Episode state and lifecycle are required.');
+            obj.writeEvent(sprintf('episodes/episode_%06d_%s.mat',episode,stage), ...
+                struct('episode',episode),record);
+        end
+        function writeDecision(obj, episode, decision, record)
+            validateattributes([episode,decision],{'numeric'},{'numel',2,'integer','positive'});
+            required = {'state','observation','next_observation','action_execution', ...
+                'reward','reward_info','terminal_reason','is_done','window', ...
+                'first_mpc_row','last_mpc_row'};
+            assert(all(isfield(record,required)), ...
+                'ExactStateDataset:DecisionRecord','The complete supervisory transition is required.');
+            validateattributes(record.reward,{'numeric'},{'scalar','finite'});
+            validateattributes([record.first_mpc_row,record.last_mpc_row], ...
+                {'numeric'},{'numel',2,'integer','positive','<=',obj.RowCount});
+            assert(record.first_mpc_row <= record.last_mpc_row, ...
+                'ExactStateDataset:DecisionRecord','Decision row range is reversed.');
+            obj.writeEvent(sprintf('decisions/episode_%06d_decision_%06d.mat',episode,decision), ...
+                struct('episode',episode,'decision',decision),record);
+        end
         function flush(obj)
             if obj.Count == 0
                 return
@@ -169,6 +195,16 @@ classdef ExactStateDataset < handle
         end
     end
     methods (Access = private)
+        function writeEvent(obj, relative, context, record)
+            obj.requireOpen();
+            target = fullfile(obj.Root,relative);
+            assert(~isfile(target),'ExactStateDataset:Exists','Refusing to overwrite %s.',target);
+            event = struct('schema_version','supervisory_transition_v1', ...
+                'source_sha',obj.Manifest.source_sha, ...
+                'configuration_sha256',obj.Manifest.configuration_sha256, ...
+                'context',context,'record',record);
+            save(target,'event','-v7.3');
+        end
         function requireOpen(obj)
             if obj.Closed
                 error('ExactStateDataset:Closed', 'This dataset is finalized.');

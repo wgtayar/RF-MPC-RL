@@ -33,6 +33,11 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     chargeStart = localTrapzCharge(state.current_time, state.current_total);
     solveCount = 0;
     failedSolveCount = 0;
+    trackingErrorSum = 0;
+    controlEffortSum = 0;
+    integratedSteps = 0;
+    lastFsm = nan(4,1);
+    lastStanceDuration = NaN;
     writer = options.dataset_writer;
     if ~isempty(writer)
         writer.beginSegment(state, options.dataset_context, p, control);
@@ -85,6 +90,8 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
 
         XtQp = state.Xt;
         UtQp = state.Ut;
+        lastFsm = FSM;
+        lastStanceDuration = min(p.Tst,0.2/norm(XtQp(4:5)));
         problem = struct('H', H, 'g', g, 'Aineq', Aineq, ...
             'bineq', bineq, 'Aeq', Aeq, 'beq', beq);
         if iteration == 1 && options.capture_first_problem
@@ -172,6 +179,9 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             state.current_time(end+1, 1) = time;
             state.current_total(end+1, 1) = kneeCurrent;
         end
+        trackingErrorSum = trackingErrorSum + sum((state.Xt-Xd(:,1)).^2);
+        controlEffortSum = controlEffortSum + sum(state.Ut.^2);
+        integratedSteps = integratedSteps+1;
         if ~isempty(writer)
             localCapture(writer, exactBefore, state, time, iteration, ...
                 XtQp, UtQp, Xd, Ud, FSM, solver, problem, ...
@@ -212,6 +222,11 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     out.survived_duration_s = state.t - initialState.t;
     out.qp_solve_count = solveCount;
     out.qp_failed_count = failedSolveCount;
+    out.integrated_steps = integratedSteps;
+    out.tracking_error_sum = trackingErrorSum;
+    out.control_effort_sum = controlEffortSum;
+    out.fsm_end = lastFsm;
+    out.stance_duration_end_s = lastStanceDuration;
     out.failure_problem = failureProblem;
     out.failure_solver = failureSolver;
     out.first_problem = firstProblem;

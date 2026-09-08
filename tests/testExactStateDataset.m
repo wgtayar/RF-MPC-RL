@@ -76,8 +76,37 @@ classdef testExactStateDataset < matlab.unittest.TestCase
             testCase.verifyError(@() validate_exact_state_row(row,previous), ...
                 'validate_exact_state_row:StateGap');
         end
+        function decisionLinksToCapturedRows(testCase)
+            writer = ExactStateDataset(testCase.Folder,struct(),testCase.Metadata);
+            testCase.appendSyntheticRows(writer,1);
+            record = testCase.decisionRecord();
+            writer.writeDecision(1,1,record);
+            writer.finish('synthetic_decision_complete');
+            report = validate_exact_state_dataset(testCase.Folder);
+            testCase.verifyEqual(report.supervisory_records,1);
+            testCase.verifyTrue(report.valid);
+        end
+        function rejectsDecisionWithWrongEndpoint(testCase)
+            writer = ExactStateDataset(testCase.Folder,struct(),testCase.Metadata);
+            testCase.appendSyntheticRows(writer,1);
+            record = testCase.decisionRecord();
+            record.state.Xt(1) = 7;
+            writer.writeDecision(1,1,record);
+            writer.finish('synthetic_wrong_endpoint');
+            testCase.verifyError(@() validate_exact_state_dataset(testCase.Folder), ...
+                'validate_exact_state_dataset:DecisionLink');
+        end
     end
     methods (Static, Access = private)
+        function record = decisionRecord()
+            [row,~] = testExactStateDataset.syntheticRow();
+            state = row.state_after;
+            state.decision_bookkeeping.observation = zeros(19,1);
+            record = struct('state',state,'observation',zeros(19,1), ...
+                'next_observation',zeros(19,1),'action_execution',row.action_execution, ...
+                'reward',0,'reward_info',struct(),'terminal_reason','','is_done',false, ...
+                'window',struct(),'first_mpc_row',1,'last_mpc_row',1);
+        end
         function appendSyntheticRows(writer,count)
             [row,problem] = testExactStateDataset.syntheticRow();
             writer.beginSegment(row.state_before, ...
