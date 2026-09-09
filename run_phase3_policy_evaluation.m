@@ -15,12 +15,21 @@ function report = run_phase3_policy_evaluation(policyId, outputRoot, options)
     rngCleanup = onCleanup(@() rng(previousRng));
     rng(options.seed,'twister');
     policy = load_phase3_policy(policyId);
+    environmentOptions = struct('reference_mode',options.reference_mode,'solver_strategy',options.solver_strategy);
+    if isfield(options,'initial_condition')
+        environmentOptions.initial_condition = options.initial_condition;
+    end
+    if isfield(options,'observation_schema')
+        assert(~strcmp(policy.kind,'actor') || strcmp(options.observation_schema,policy.observation_schema), ...
+            'run_phase3_policy_evaluation:LegacyObservation','Historical actors require their original observation schema.');
+        environmentOptions.observation_schema = options.observation_schema;
+        policy.observation_schema = options.observation_schema;
+    end
     [~,runId] = fileparts(outputRoot);
     metadata = struct('run_id',runId,'run_type','deterministic_policy_evaluation', ...
         'monitor_root',fullfile(fileparts(source),'RL-MPC-Monitor'), ...
         'seed',options.seed,'source_policy',policy.id,'policy',rmfield(policy,'actor'));
-    env = Phase3MpcEnvironment(bundle,outputRoot,metadata, ...
-        struct('reference_mode',options.reference_mode,'solver_strategy',options.solver_strategy));
+    env = Phase3MpcEnvironment(bundle,outputRoot,metadata,environmentOptions);
     try
         report = localEvaluate(env,policy,bundle,options,runId);
     catch exception
@@ -73,8 +82,16 @@ end
 function options = localOptions(options)
     defaults = struct('reference_mode','legacy_absolute_time','solver_strategy','default', ...
         'max_decisions',inf,'seed',20260903);
-    assert(all(ismember(fieldnames(options),fieldnames(defaults))), ...
+    assert(all(ismember(fieldnames(options),[fieldnames(defaults);{'initial_condition';'observation_schema'}])), ...
         'run_phase3_policy_evaluation:Options','Unknown evaluation option.');
+    if isfield(options,'initial_condition')
+        options.initial_condition = validate_phase3_initial_condition(options.initial_condition);
+    end
+    if isfield(options,'observation_schema')
+        options.observation_schema = validatestring(options.observation_schema, ...
+            {'observation_v1_legacy','observation_v2_dynamic_health_candidate_v1', ...
+            'observation_v2_dynamic_health_candidate_v2'});
+    end
     for name = fieldnames(defaults).'
         if ~isfield(options,name{1})
             options.(name{1}) = defaults.(name{1});

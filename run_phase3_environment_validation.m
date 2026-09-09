@@ -1,7 +1,8 @@
-function report = run_phase3_environment_validation(outputRoot, shortProbe, observationSchema)
+function report = run_phase3_environment_validation(outputRoot, shortProbe, observationSchema, initialCondition)
 %run_phase3_environment_validation Exercise two captured RL decisions and reset.
 % Default uses genuine 50-second decisions. shortProbe=true includes two
 % 10-step decisions plus MATLAB validateEnvironment's captured 10-step probe.
+% Optional initialCondition is applied at every reset and preserved in config.
     if nargin < 2
         shortProbe = false;
     end
@@ -27,6 +28,9 @@ function report = run_phase3_environment_validation(outputRoot, shortProbe, obse
         'monitor_root',fullfile(fileparts(source),'RL-MPC-Monitor'), ...
         'seed',bundle.cfg.RNG_SEED,'source_policy','mission_average_then_legal_speed_increase');
     options = struct('reference_mode','position_continuous_v1','solver_strategy','default');
+    if nargin >= 4
+        options.initial_condition = validate_phase3_initial_condition(initialCondition);
+    end
     expectedDimension = 19;
     if ~strcmp(observationSchema,'observation_v1_legacy')
         options.observation_schema = observationSchema;

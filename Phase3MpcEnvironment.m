@@ -88,6 +88,11 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             end
             cfg = obj.Config;
             obj.State = initialize_mpc_replay_state(cfg,0);
+            initialConditionAudit = struct();
+            if isfield(obj.Options,'initial_condition')
+                [obj.State,initialConditionAudit] = apply_phase3_initial_condition( ...
+                    obj.State,obj.Options.initial_condition);
+            end
             obj.State.R = obj.InitialR;
             obj.State.supervisory_state.last_R = obj.InitialR;
             [vReq,aReq] = obj.sampleRequest();
@@ -115,6 +120,9 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             end
             record = struct('state',obj.State,'observation',observation, ...
                 'lifecycle_reason','reset','rng_state',rng,'observation_audit',observationAudit);
+            if isfield(obj.Options,'initial_condition')
+                record.initial_condition_audit = initialConditionAudit;
+            end
             obj.Writer.writeEpisode(obj.Episode,'start',record);
         end
 
@@ -270,8 +278,11 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
 end
 
 function options = localOptions(options)
-    assert(all(ismember(fieldnames(options),{'reference_mode','solver_strategy','observation_schema'})), ...
-        'Phase3MpcEnvironment:Options','Only explicit reference and solver options are supported.');
+    assert(all(ismember(fieldnames(options),{'reference_mode','solver_strategy','observation_schema','initial_condition'})), ...
+        'Phase3MpcEnvironment:Options','Unknown environment option.');
+    if isfield(options,'initial_condition')
+        options.initial_condition = validate_phase3_initial_condition(options.initial_condition);
+    end
     if ~isfield(options,'reference_mode')
         options.reference_mode = 'legacy_absolute_time';
     end
