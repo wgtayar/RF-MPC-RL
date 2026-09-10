@@ -56,6 +56,17 @@ classdef testPhase3ActionSemantics < matlab.unittest.TestCase
             testCase.verifyEqual(result.gamma_v_applied, 0.32, AbsTol=1e-14);
             testCase.verifyEqual(result.delta_v_exec, 0.024, AbsTol=1e-14);
         end
+        function highAccelerationBaselineStillUsesGovernor(testCase)
+            candidate = baseline_supervisory_action('fast_start_high_acceleration',0,testCase.Config);
+            result = resolve_supervisory_action(candidate,testCase.Previous, ...
+                testCase.Config,testCase.Lower,testCase.Upper);
+            testCase.verifyEqual(result.R_applied,testCase.Previous.last_R);
+            testCase.verifyEqual(result.gamma_v_raw,0.45,AbsTol=1e-14);
+            testCase.verifyEqual(result.gamma_v_applied,0.32,AbsTol=1e-14);
+            testCase.verifyEqual(result.delta_v_exec,0.024,AbsTol=1e-14);
+            testCase.verifyEqual(result.gamma_a_applied,0.5,AbsTol=1e-14);
+            testCase.verifyEqual(result.a_exec,0.5,AbsTol=1e-14);
+        end
         function saturationKeepsCandidateAndEffectiveRDistinct(testCase)
             previous = testCase.Previous;
             previous.last_R = testCase.Upper;
