@@ -21,8 +21,23 @@ classdef testPhase3EnvironmentContract < matlab.unittest.TestCase
             env = Phase3MpcEnvironment(testCase.Bundle,testCase.Folder,testCase.Metadata);
             testCase.verifyEqual(env.Writer.RowCount,0);
             testCase.verifyEqual(env.Episode,0);
+            testCase.verifyFalse(isfield(env.Config.PHASE3.options,'mission_end_mode'));
+            testCase.verifyEqual(env.Config.PHASE3.environment_version,'phase3_captured_environment_v1');
             testCase.verifyError(@() step(env,zeros(5,1)),'Phase3MpcEnvironment:ResetRequired');
             close(env,'unit_test_complete');
+        end
+        function targetStopRequiresExplicitVersionedOptIn(testCase)
+            env = Phase3MpcEnvironment(testCase.Bundle,testCase.Folder,testCase.Metadata, ...
+                struct('mission_end_mode','mpc_step_target_v1'));
+            testCase.verifyEqual(env.Config.PHASE3.environment_version,'phase3_captured_environment_target_stop_v1');
+            testCase.verifyEqual(env.Config.PHASE3.options.mission_end_mode,'mpc_step_target_v1');
+            testCase.verifyEqual(env.Writer.RowCount,0);
+            close(env,'unit_test_complete');
+        end
+        function rejectsUnknownTargetStopMode(testCase)
+            testCase.verifyError(@() Phase3MpcEnvironment(testCase.Bundle,testCase.Folder,testCase.Metadata, ...
+                struct('mission_end_mode','mpc')),'Phase3MpcEnvironment:MissionEndMode');
+            testCase.verifyFalse(isfolder(testCase.Folder));
         end
         function resetLifecycleHasUniqueEpisodes(testCase)
             env = Phase3MpcEnvironment(testCase.Bundle,testCase.Folder,testCase.Metadata);

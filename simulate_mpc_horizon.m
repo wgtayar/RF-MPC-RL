@@ -5,6 +5,12 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         options = struct();
     end
     options = localDefaults(options, cfg);
+    if ~isempty(options.stop_at_position_x_m)
+        validateattributes(options.stop_at_position_x_m,{'double'},{'scalar','real','finite'});
+        assert(isfinite(state.Xt(1)) && state.Xt(1)<options.stop_at_position_x_m, ...
+            'simulate_mpc_horizon:TargetAlreadyReached', ...
+            'A target-stop continuation must start strictly before its target.');
+    end
     if state.t == 0 && isempty(fieldnames(state.fsm_internal_state))
         reset_mpc_case_state();
     end
@@ -187,6 +193,10 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
                 XtQp, UtQp, Xd, Ud, FSM, solver, problem, ...
                 control, kneeCurrent, true, options.update_battery && isfinite(kneeCurrent));
         end
+        if ~isempty(options.stop_at_position_x_m) && state.Xt(1)>=options.stop_at_position_x_m
+            terminalReason = "mission_target_reached";
+            break
+        end
     end
 
     if options.update_battery && numel(state.current_time) >= 2
@@ -216,7 +226,12 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     out = struct();
     out.trace = trace;
     out.terminal_reason = terminalReason;
-    out.completed_horizon = terminalReason == "horizon_complete";
+    out.completed_horizon = terminalReason == "horizon_complete" || ...
+        (terminalReason == "mission_target_reached" && integratedSteps==numberSteps);
+    if ~isempty(options.stop_at_position_x_m)
+        out.stop_at_position_x_m = options.stop_at_position_x_m;
+        out.target_stop_resolution = 'first_successful_integrated_mpc_step';
+    end
     out.requested_duration_s = options.duration_s;
     out.mpc_timestep_s = dt;
     out.survived_duration_s = state.t - initialState.t;
@@ -253,6 +268,7 @@ function options = localDefaults(options, cfg)
     options = localSetDefault(options, 'update_battery', false);
     options = localSetDefault(options, 'dataset_writer', []);
     options = localSetDefault(options, 'dataset_context', struct());
+    options = localSetDefault(options, 'stop_at_position_x_m', []);
 end
 
 function localCapture(writer, before, state, time, iteration, ...

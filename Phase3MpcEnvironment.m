@@ -65,6 +65,10 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 'training_promoted',false,'reset_R_each_episode',true, ...
                 'options',options,'initial_R',bundle.initial_R(:), ...
                 'lower_R',bundle.lower_abs(:),'upper_R',bundle.upper_abs(:));
+            if isfield(options,'mission_end_mode') && strcmp(options.mission_end_mode,'mpc_step_target_v1')
+                validateattributes(cfg.MISSION.D_TARGET_M,{'double'},{'scalar','real','finite','positive'});
+                cfg.PHASE3.environment_version = 'phase3_captured_environment_target_stop_v1';
+            end
             metadata.observation_schema_version = cfg.PHASE3.observation_schema;
             metadata.reward_version = cfg.PHASE3.reward_version;
             metadata.solver_strategy = options.solver_strategy;
@@ -223,6 +227,10 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                     'solver_strategy',obj.Options.solver_strategy,'capture_trace',true, ...
                     'update_battery',true,'dataset_writer',obj.Writer, ...
                     'dataset_context',struct('episode',obj.Episode,'decision',obj.Decision,'chunk',k));
+                if isfield(obj.Options,'mission_end_mode') && strcmp(obj.Options.mission_end_mode,'mpc_step_target_v1')
+                    options.stop_at_position_x_m = ...
+                        obj.State.decision_bookkeeping.initial_position_x+cfg.MISSION.D_TARGET_M;
+                end
                 [obj.State,chunks{k}] = simulate_mpc_horizon(obj.State,control,cfg,options);
                 distance = max(0,obj.State.Xt(1)-obj.State.decision_bookkeeping.initial_position_x);
                 [terminal,finished] = resolve_phase3_terminal(obj.State,chunks{k},distance,cfg);
@@ -278,7 +286,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
 end
 
 function options = localOptions(options)
-    assert(all(ismember(fieldnames(options),{'reference_mode','solver_strategy','observation_schema','initial_condition'})), ...
+    assert(all(ismember(fieldnames(options),{'reference_mode','solver_strategy','observation_schema','initial_condition','mission_end_mode'})), ...
         'Phase3MpcEnvironment:Options','Unknown environment option.');
     if isfield(options,'initial_condition')
         options.initial_condition = validate_phase3_initial_condition(options.initial_condition);
@@ -298,5 +306,11 @@ function options = localOptions(options)
         options.observation_schema = validatestring(options.observation_schema, ...
             {'observation_v1_legacy','observation_v2_dynamic_health_candidate_v1', ...
             'observation_v2_dynamic_health_candidate_v2'});
+    end
+    if isfield(options,'mission_end_mode')
+        mode = string(options.mission_end_mode);
+        assert(isscalar(mode) && any(mode==["chunk_boundary_v1","mpc_step_target_v1"]), ...
+            'Phase3MpcEnvironment:MissionEndMode','Require an explicit supported mission-end mode.');
+        options.mission_end_mode = char(mode);
     end
 end

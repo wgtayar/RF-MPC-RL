@@ -65,7 +65,9 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
     end
     window.terminal_reason = terminal;
     window.completed_episode = strcmp(terminal,'mission_complete');
-    window.feasible = all(cellfun(@(out) out.completed_horizon,chunks));
+    window.feasible = all(cellfun(@(out) out.completed_horizon || ...
+        (strcmp(out.terminal_reason,'mission_target_reached') && ...
+        out.qp_failed_count==0 && out.integrated_steps>0),chunks));
     window.recovered_solver_events = sum(cellfun(@(out) ...
         nnz(out.trace.solver_classification == "numerical_solver_failure_recovered"),chunks));
     window.qp_solve_count = sum(cellfun(@(out) out.qp_solve_count,chunks));
