@@ -1,0 +1,76 @@
+function c = components(window,execution,health,scales)
+%components Factored candidate, not calibrated safety.
+% Physical costs use observed integrals, action costs use actually applied
+% changes. No old proxy norm, unreachable hinge, or solver-label remapping.
+    requiredScales = {'mission_duration_s','target_distance_m','charge_budget_As', ...
+        'orientation_rad','omega_rad_s','velocity_error_m_s','dR_max', ...
+        'delta_gamma_v_max','delta_v_max','acceleration_max'};
+    assert(isequal(sort(fieldnames(scales)),sort(requiredScales(:))), ...
+        'candidateReward:Scales','Explicit complete scales are required.');
+    scaleValues = cellfun(@(f) scales.(f),requiredScales);
+    validateattributes(scaleValues,{'double'},{'real','finite','positive','row'});
+    validateattributes(window.duration_s,{'double'},{'scalar','real','finite','nonnegative'});
+    validateattributes([window.window_distance_m,window.distance_start_m,window.distance_end_m], ...
+        {'double'},{'real','finite','numel',3});
+    validateattributes(window.charge_As,{'double'},{'scalar','real','finite','nonnegative'});
+    dt = window.duration_s;
+    T = scales.mission_duration_s;
+    D = scales.target_distance_m;
+    assert(abs(health.integrated_duration_s-dt)<=1e-8, ...
+        'candidateReward:Duration','Health must cover the same actually integrated window.');
+    physicalNames = {'orientation','omega','velocity_error'};
+    physicalScales = [scales.orientation_rad,scales.omega_rad_s,scales.velocity_error_m_s];
+    physical = nan(1,3);
+    for k = 1:3
+        integral = health.([physicalNames{k} '_squared_integral_observed']);
+        coverage = health.([physicalNames{k} '_finite_coverage_s']);
+        if dt==0
+            assert(coverage==0 && (isnan(integral) || integral==0), ...
+                'candidateReward:ZeroExposure','Zero time cannot contain a nonzero physical integral.');
+            physical(k) = 0;
+        elseif abs(coverage-dt)<=1e-8 && isfinite(integral) && integral>=0
+            physical(k) = integral/(physicalScales(k)^2*T);
+        end
+    end
+    dR = execution.R_applied(:)./execution.R_before(:)-1;
+    validateattributes(dR,{'double'},{'numel',3,'real','finite'});
+    normalized = [dR.'/scales.dR_max, ...
+        execution.delta_gamma_v_applied/scales.delta_gamma_v_max, ...
+        execution.delta_v_exec/scales.delta_v_max,execution.a_exec/scales.acceleration_max];
+    assert(all(isfinite(normalized)) && all(abs(normalized)<=1+1e-6), ...
+        'candidateReward:Reachability','Applied action exceeds its declared audited scale.');
+    % Costs count supervisory changes once, not once per simulated second.
+    costs = [physical,window.charge_As/scales.charge_budget_As,normalized.^2];
+    names = ["orientation_exposure","omega_exposure","tracking_exposure", ...
+        "modeled_charge","dR1_change","dR2_change","dR3_change", ...
+        "gamma_v_change","velocity_command_change","acceleration_command"];
+    fraction = dt/T;
+    q = NaN;
+    capped = 0;
+    shortfall = 0;
+    if dt>0
+        q = window.window_distance_m/(D*fraction);
+        capped = fraction*min(q,1);
+        shortfall = -fraction*max(1-q,0);
+    else
+        assert(window.charge_As==0 && window.window_distance_m==0, ...
+            'candidateReward:ZeroExposure','Zero-duration window has nonzero charge or displacement.');
+    end
+    scheduleDelta = min(window.distance_end_m/D,1)-min(window.distance_start_m/D,1)-fraction;
+    terminal = string(window.terminal_reason);
+    categories = ["mission_complete","time_limit","battery_terminal","dynamic_safety_violation", ...
+        "numerical_solver_failure_unrecovered","mathematical_constraint_infeasible", ...
+        "invalid_state","no_safe_action_available","unclassified_solver_failure"];
+    assert(isscalar(terminal) && (terminal=="" || any(terminal==categories)), ...
+        'candidateReward:Terminal','Unknown terminal; recovered solver events are not terminals.');
+    validateattributes(window.recovered_solver_events,{'double'},{'scalar','integer','nonnegative'});
+    c = struct('version','reward_phase3_factored_candidate_v1','cost_names',names, ...
+        'costs',costs,'physical_costs_available',all(isfinite(physical)), ...
+        'physical_exposure_observed',dt>0,'duration_s',dt,'pace_ratio',q, ...
+        'pace_names',["duration_capped","duration_shortfall","schedule_delta_undiscounted"], ...
+        'pace_values',[capped,shortfall,scheduleDelta],'terminal_categories',categories, ...
+        'terminal_reason',terminal,'terminal_indicators',double(terminal==categories), ...
+        'recovered_solver_events',window.recovered_solver_events,'scales',scales, ...
+        'calibrated_dynamic_safety',false,'training_promoted',false, ...
+        'scope','Candidate objective costs, not safety probabilities. Missing observed health stays NaN. Zero-duration physical exposure is zero with pace ratio unknown; action and terminal contributions remain explicit.');
+end

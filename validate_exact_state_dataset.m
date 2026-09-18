@@ -16,6 +16,15 @@ function report = validate_exact_state_dataset(root)
     assert(strcmp(sha256_file(fullfile(root,'manifest','configuration.mat')), ...
         manifest.configuration_sha256), 'validate_exact_state_dataset:ConfigHash', ...
         'Configuration bytes do not match manifest.');
+    candidate = strcmp(manifest.reward_version,'reward_phase3_coverage_candidate_v1');
+    cfg = struct();
+    if candidate
+        configuration = load(fullfile(root,'manifest','configuration.mat'),'cfg');
+        cfg = configuration.cfg;
+        assert(strcmp(cfg.PHASE3.reward_version,manifest.reward_version), ...
+            'validate_exact_state_dataset:RewardVersion','Reward configuration and manifest differ.');
+        phase3reward.validatePolicy(cfg.PHASE3.options.reward_policy,cfg);
+    end
     index = readtable(fullfile(root,'mpc_steps','index.csv'),'TextType','string');
     previous = [];
     count = 0;
@@ -67,6 +76,26 @@ function report = validate_exact_state_dataset(root)
                 qpCount = qpCount+1;
             end
             previous = row;
+            if candidate
+                range = decisionRanges(key);
+                if row.row_id==range.first
+                    initial = load(localReference(root,row.snapshot_reference,verifiedHashes),'snapshot');
+                    range.before = initial.snapshot.state;
+                    range.dt = initial.snapshot.parameters.simTimeStep;
+                    range.exposure = [];
+                    range.sample_times = zeros(0,1);
+                    range.sample_currents = zeros(0,1);
+                    assert(abs(range.before.t-row.time_before)<1e-10, ...
+                        'validate_exact_state_dataset:RewardStart','First row is not the decision snapshot time.');
+                end
+                range.exposure = phase3reward.accumulate(range.exposure,row,range.dt);
+                range.time_after = row.time_after;
+                if row.current_sample_committed
+                    range.sample_times(end+1,1) = row.current_sample_time;
+                    range.sample_currents(end+1,1) = row.current_sample_A;
+                end
+                decisionRanges(key) = range;
+            end
             count = count+1;
         end
     end
@@ -77,8 +106,8 @@ function report = validate_exact_state_dataset(root)
         'files',height(files),'source_sha',manifest.source_sha, ...
         'run_status',saved.completion.status, ...
         'restore_equivalence_tested',false);
-    [report.supervisory_records,report.supervisory_decisions_complete] = ...
-        localValidateEvents(root,manifest,decisionRanges,verifiedHashes);
+    [report.supervisory_records,report.supervisory_decisions_complete,report.rewards_reconstructed] = ...
+        localValidateEvents(root,manifest,decisionRanges,verifiedHashes,cfg);
     if isfield(manifest,'supervisory_records_required') && manifest.supervisory_records_required && ...
             ~strcmp(saved.completion.status,'environment_exception')
         assert(report.supervisory_decisions_complete, ...
@@ -86,9 +115,10 @@ function report = validate_exact_state_dataset(root)
     end
 end
 
-function [count,complete] = localValidateEvents(root, manifest, ranges, hashes)
+function [count,complete,reconstructed] = localValidateEvents(root, manifest, ranges, hashes,cfg)
     files = [dir(fullfile(root,'episodes','*.mat'));dir(fullfile(root,'decisions','*.mat'))];
     count = numel(files);
+    reconstructed = 0;
     seen = containers.Map('KeyType','char','ValueType','logical');
     for k = 1:count
         path = fullfile(files(k).folder,files(k).name);
@@ -116,6 +146,19 @@ function [count,complete] = localValidateEvents(root, manifest, ranges, hashes)
                 isfinite(record.reward) && all(isfinite(record.observation)) && ...
                 all(isfinite(record.next_observation)), ...
                 'validate_exact_state_dataset:DecisionObservation','Decision observation/reward is inconsistent.');
+            if strcmp(manifest.reward_version,'reward_phase3_coverage_candidate_v1')
+                assert(isequal(record.state.current_time(:),[range.before.current_time(:);range.sample_times]) && ...
+                    isequal(record.state.current_total(:),[range.before.current_total(:);range.sample_currents]) && ...
+                    abs(record.state.t-range.time_after)<1e-10 && ...
+                    strcmp(record.terminal_reason,record.window.terminal_reason), ...
+                    'validate_exact_state_dataset:RewardHistory','Decision differs from captured current/time/terminal history.');
+                exposure = phase3reward.finishExposure(range.exposure);
+                [reward,info] = compute_phase3_reward_candidate(record.window,record.action_execution, ...
+                    exposure,range.before,record.state,cfg,cfg.PHASE3.options.reward_policy);
+                assert(isequaln(reward,record.reward) && isequaln(info,record.reward_info), ...
+                    'validate_exact_state_dataset:RewardReconstruction','Candidate reward or audit differs from captured evidence.');
+                reconstructed = reconstructed+1;
+            end
         end
     end
     complete = seen.Count == ranges.Count;

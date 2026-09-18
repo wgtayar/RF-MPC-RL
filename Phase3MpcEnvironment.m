@@ -2,7 +2,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
     %Phase3MpcEnvironment Isolated, fully captured supervisory RL interface.
     % Constructor inputs are an explicit runtime bundle, new dataset path,
     % provenance metadata and optional reference_mode/solver_strategy options.
-    % Uses an explicit observation schema and a comparison-only reward bridge. This is
+    % Uses an explicit observation schema and a legacy bridge or opt-in candidate reward. This is
     % not promoted for training until observation/reward/viability gates pass.
     properties (SetAccess = private)
         State = struct()
@@ -68,6 +68,11 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             if isfield(options,'mission_end_mode') && strcmp(options.mission_end_mode,'mpc_step_target_v1')
                 validateattributes(cfg.MISSION.D_TARGET_M,{'double'},{'scalar','real','finite','positive'});
                 cfg.PHASE3.environment_version = 'phase3_captured_environment_target_stop_v1';
+            end
+            if isfield(options,'reward_schema') && strcmp(options.reward_schema,'reward_phase3_coverage_candidate_v1')
+                phase3reward.validatePolicy(options.reward_policy,cfg);
+                cfg.PHASE3.reward_version = options.reward_schema;
+                cfg.PHASE3.environment_version = 'phase3_captured_environment_coverage_reward_v1';
             end
             metadata.observation_schema_version = cfg.PHASE3.observation_schema;
             metadata.reward_version = cfg.PHASE3.reward_version;
@@ -142,7 +147,13 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             try
                 [chunks,terminal] = obj.advanceDecision(control);
                 window = phase3_decision_window(before,obj.State,chunks,control,obj.Config,terminal);
-                [reward,rewardInfo] = compute_phase3_reward_bridge(window,obj.Config);
+                if strcmp(obj.Config.PHASE3.reward_version,'reward_phase3_coverage_candidate_v1')
+                    exposure = obj.Writer.decisionRewardExposure(firstRow,obj.Writer.RowCount);
+                    [reward,rewardInfo] = compute_phase3_reward_candidate(window,control.action_execution, ...
+                        exposure,before,obj.State,obj.Config,obj.Options.reward_policy);
+                else
+                    [reward,rewardInfo] = compute_phase3_reward_bridge(window,obj.Config);
+                end
                 [observation,observationAudit] = obj.observeWindow(window,control);
                 assert(isfinite(reward) && all(isfinite(observation)), ...
                     'Phase3MpcEnvironment:NonfiniteTransition','Reward/observation must be finite.');
@@ -286,7 +297,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
 end
 
 function options = localOptions(options)
-    assert(all(ismember(fieldnames(options),{'reference_mode','solver_strategy','observation_schema','initial_condition','mission_end_mode'})), ...
+    assert(all(ismember(fieldnames(options),{'reference_mode','solver_strategy','observation_schema','initial_condition','mission_end_mode','reward_schema','reward_policy'})), ...
         'Phase3MpcEnvironment:Options','Unknown environment option.');
     if isfield(options,'initial_condition')
         options.initial_condition = validate_phase3_initial_condition(options.initial_condition);
@@ -313,4 +324,13 @@ function options = localOptions(options)
             'Phase3MpcEnvironment:MissionEndMode','Require an explicit supported mission-end mode.');
         options.mission_end_mode = char(mode);
     end
+    if isfield(options,'reward_schema')
+        schema = string(options.reward_schema);
+        assert(isscalar(schema) && any(schema==["reward_phase3_legacy_bridge_v1","reward_phase3_coverage_candidate_v1"]), ...
+            'Phase3MpcEnvironment:RewardSchema','Require an explicit supported reward schema.');
+        options.reward_schema = char(schema);
+    end
+    candidate = isfield(options,'reward_schema') && strcmp(options.reward_schema,'reward_phase3_coverage_candidate_v1');
+    assert(isfield(options,'reward_policy')==candidate, ...
+        'Phase3MpcEnvironment:RewardPolicy','Only the explicit candidate schema requires a complete reward policy.');
 end

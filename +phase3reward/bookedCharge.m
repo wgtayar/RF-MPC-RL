@@ -1,0 +1,56 @@
+function [charge,carry] = bookedCharge(previous,times,current,startTime,endTime,dt)
+%bookedCharge Explicit left-history model-charge convention.
+% previous is [] or [last_committed_time,last_committed_current]. The boundary
+% interval is booked when its right sample arrives, even if it starts earlier.
+    validateattributes([startTime,endTime,dt],{'double'},{'real','finite','numel',3});
+    assert(startTime>=0 && endTime>=startTime && dt>0, ...
+        'bookedCharge:Window','Require ordered nonnegative times and positive timestep.');
+    validateattributes(times,{'double'},{'real','finite','2d'});
+    validateattributes(current,{'double'},{'real','finite','2d'});
+    assert((isempty(times) || iscolumn(times)) && (isempty(current) || iscolumn(current)) && ...
+        numel(times)==numel(current),'bookedCharge:Samples','Require matching columns or empty histories.');
+    times = times(:);
+    current = current(:);
+    validateattributes(previous,{'double'},{'real','finite'});
+    assert(isempty(previous) || isequal(size(previous),[1,2]), ...
+        'bookedCharge:Carry','Carry must be empty or one explicit time/current pair.');
+    tol = max(1e-10,64*eps(max([1;endTime;times])));
+    assert(tol<dt/100 && abs((endTime-startTime)/dt-round((endTime-startTime)/dt))*dt<=tol, ...
+        'bookedCharge:Grid','Window must lie on a resolvable MPC grid.');
+    assert(all(diff(times)>0) && all(times>=startTime-tol) && ...
+        all(times<=endTime-dt+tol) && ...
+        all(abs((times-startTime)/dt-round((times-startTime)/dt))*dt<=tol), ...
+        'bookedCharge:Samples','New samples must be ordered MPC input-time samples inside this window.');
+    if ~isempty(previous)
+        assert(previous(1)>=0 && previous(1)<=startTime-dt+tol && ...
+            abs((startTime-previous(1))/dt-round((startTime-previous(1))/dt))*dt<=tol, ...
+            'bookedCharge:Carry','Previous sample must be on the grid strictly before the window.');
+    end
+    boundaryCharge = 0;
+    boundaryDuration = 0;
+    carry = previous;
+    sampleTimes = times;
+    sampleCurrent = current;
+    if ~isempty(times)
+        carry = [times(end),current(end)];
+        if ~isempty(previous)
+            boundaryDuration = times(1)-previous(1);
+            boundaryCharge = boundaryDuration*(abs(previous(2))/2+abs(current(1))/2);
+            sampleTimes = [previous(1);times];
+            sampleCurrent = [previous(2);current];
+        end
+    end
+    intervals = diff(sampleTimes);
+    increments = intervals.*(abs(sampleCurrent(1:end-1))/2+abs(sampleCurrent(2:end))/2);
+    within = diff(times).*(abs(current(1:end-1))/2+abs(current(2:end))/2);
+    assert(all(isfinite(increments)) && isfinite(sum(increments)) && isfinite(boundaryCharge), ...
+        'bookedCharge:Overflow','Nonfinite model-charge integral.');
+    charge = struct('schema','booked_charge_increment_v1', ...
+        'booked_charge_As',sum(increments),'within_window_charge_As',sum(within), ...
+        'boundary_charge_As',boundaryCharge,'boundary_duration_s',boundaryDuration, ...
+        'new_sample_count',numel(times),'within_window_pair_observed',numel(times)>=2, ...
+        'any_pair_booked',~isempty(increments),'gap_interval_count',nnz(intervals>dt+tol), ...
+        'gap_interval_duration_s',sum(intervals(intervals>dt+tol)), ...
+        'full_window_physical_charge_claim',false, ...
+        'scope','Model trapezoids booked on arrival of each right sample; zero without a pair is a bookkeeping convention, not observed zero energy. Gap and pre-window boundary interpolation remain explicit.');
+end

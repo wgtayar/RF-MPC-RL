@@ -16,6 +16,36 @@ classdef testExactStateDataset < matlab.unittest.TestCase
         end
     end
     methods (Test)
+        function candidateRewardReconstructedFromCapturedRows(testCase)
+            [writer,record] = testCase.candidateFixture();
+            writer.writeDecision(1,1,record);
+            writer.finish('candidate_unit_complete');
+            report = validate_exact_state_dataset(testCase.Folder);
+            testCase.verifyEqual(report.rewards_reconstructed,1);
+            testCase.verifyTrue(report.valid);
+        end
+        function candidateRewardAnnotationMismatchRejected(testCase)
+            [writer,record] = testCase.candidateFixture();
+            record.reward = record.reward+1;
+            writer.writeDecision(1,1,record);
+            writer.finish('candidate_annotation_negative_control');
+            testCase.verifyError(@() validate_exact_state_dataset(testCase.Folder), ...
+                'validate_exact_state_dataset:RewardReconstruction');
+        end
+        function candidateCurrentNotPresentInRowsRejected(testCase)
+            [writer,record] = testCase.candidateFixture();
+            record.state.current_time = 0;
+            record.state.current_total = 10;
+            writer.writeDecision(1,1,record);
+            writer.finish('candidate_current_negative_control');
+            testCase.verifyError(@() validate_exact_state_dataset(testCase.Folder), ...
+                'validate_exact_state_dataset:RewardHistory');
+        end
+        function candidateRequiresCompleteDecisionRange(testCase)
+            [writer,~] = testCase.candidateFixture();
+            testCase.verifyError(@() writer.decisionRewardExposure(1,2),'ExactStateDataset:RewardRows');
+            writer.finish('candidate_range_negative_control');
+        end
         function roundTripHasLinkedExactQP(testCase)
             writer = ExactStateDataset(testCase.Folder,struct('test',true),testCase.Metadata);
             [row,problem] = testCase.syntheticRow();
@@ -95,6 +125,47 @@ classdef testExactStateDataset < matlab.unittest.TestCase
             writer.finish('synthetic_wrong_endpoint');
             testCase.verifyError(@() validate_exact_state_dataset(testCase.Folder), ...
                 'validate_exact_state_dataset:DecisionLink');
+        end
+    end
+    methods (Access = private)
+        function [writer,record] = candidateFixture(testCase)
+            source = fileparts(fileparts(mfilename('fullpath')));
+            bundle = load(fullfile(source,'rlEnv_MPC_R.mat'),'cfg');
+            cfg = bundle.cfg;
+            cfg.RANDOMIZE_REQUEST = false;
+            cfg.BATTERY.use_pack_sizing = false;
+            policy = phase3reward.unitPolicy('unit_reference_experimental_v1');
+            schema = 'reward_phase3_coverage_candidate_v1';
+            cfg.PHASE3 = struct('reward_version',schema,'options',struct('reward_policy',policy));
+            metadata = testCase.Metadata;
+            metadata.reward_version = schema;
+            writer = ExactStateDataset(testCase.Folder,cfg,metadata);
+            [row,problem] = testCase.syntheticRow();
+            row.state_before.gait = 0;
+            row.state_before.current_time = [];
+            row.state_before.current_total = [];
+            row.state_after = row.state_before;
+            row.state_after.t = 0.01;
+            health = struct('valid',true,'components',struct('orientation_error_rad',0, ...
+                'angular_velocity_norm',0),'linear_velocity_error',0);
+            row.health_before = health;
+            row.health_after = health;
+            writer.beginSegment(row.state_before,struct('episode',1,'decision',1,'chunk',1), ...
+                struct('simTimeStep',0.01),struct('action_execution',row.action_execution));
+            writer.append(row,problem);
+            writer.endSegment(row.state_after,struct('terminal_reason',''));
+            record = testCase.decisionRecord();
+            record.state = row.state_after;
+            record.state.decision_bookkeeping.observation = record.next_observation;
+            record.window = struct('tracking_error_mean',0,'control_effort_mean',0,'Ieq_window',0, ...
+                'soc_start_pct',95,'soc_end_pct',95,'lag_frac',0,'time_frac',0,'progress_frac',0, ...
+                'distance_start_m',0,'distance_end_m',0,'window_distance_m',0, ...
+                'v_exec',row.action_execution.v_exec,'a_exec',row.action_execution.a_exec, ...
+                'delta_v_exec',row.action_execution.delta_v_exec,'delta_gamma_v',0,'dR2',0, ...
+                'state_norm_proxy',0,'com_speed_mag',0,'terminal_reason','', ...
+                'battery',struct('margin_norm',0.95),'recovered_solver_events',0,'duration_s',0.01,'charge_As',0);
+            [record.reward,record.reward_info] = compute_phase3_reward_candidate(record.window, ...
+                record.action_execution,writer.decisionRewardExposure(1,1),row.state_before,row.state_after,cfg,policy);
         end
     end
     methods (Static, Access = private)

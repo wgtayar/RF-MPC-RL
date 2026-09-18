@@ -19,6 +19,10 @@ classdef ExactStateDataset < handle
         Index = cell(0,6)
         PreviousRow = []
         AuditInterval = 100
+        RewardAccumulator = []
+        RewardKey = ''
+        RewardTimestep = NaN
+        RewardEnabled = false
     end
     methods
         function obj = ExactStateDataset(root, cfg, metadata)
@@ -64,6 +68,7 @@ classdef ExactStateDataset < handle
             manifest.storage_layout = 'packed_recursive_columns_v1';
             manifest.configuration_hash_kind = 'sha256_of_archived_mat_file_bytes';
             obj.Manifest = manifest;
+            obj.RewardEnabled = strcmp(manifest.reward_version,'reward_phase3_coverage_candidate_v1');
             save(fullfile(obj.Root,'manifest','run.mat'), 'manifest', '-v7.3');
         end
         function beginSegment(obj, state, context, parameters, control)
@@ -79,6 +84,9 @@ classdef ExactStateDataset < handle
             obj.flush();
             obj.Segment = obj.Segment+1;
             obj.Context = context;
+            if obj.RewardEnabled
+                obj.RewardTimestep = parameters.simTimeStep;
+            end
             relative = sprintf('snapshots/segment_%06d_before.mat', obj.Segment);
             snapshot = struct('state',state,'context',context,'parameters',parameters, ...
                 'control',control,'configuration_sha256',obj.Manifest.configuration_sha256);
@@ -100,6 +108,14 @@ classdef ExactStateDataset < handle
             row.configuration_sha256 = obj.Manifest.configuration_sha256;
             row.source_sha = obj.Manifest.source_sha;
             validate_exact_state_row(row, obj.PreviousRow);
+            if obj.RewardEnabled
+                key = sprintf('%d_%d',row.context.episode,row.context.decision);
+                if ~strcmp(key,obj.RewardKey)
+                    obj.RewardAccumulator = [];
+                    obj.RewardKey = key;
+                end
+                obj.RewardAccumulator = phase3reward.accumulate(obj.RewardAccumulator,row,obj.RewardTimestep);
+            end
             saveQP = ~row.solver.success || row.dynamic_event || ...
                 row.iteration == 1 || mod(row.row_id-1,obj.AuditInterval) == 0;
             row.qp_reference = struct('file','','sha256','');
@@ -128,6 +144,13 @@ classdef ExactStateDataset < handle
             snapshot = struct('state',state,'outcome',outcome,'context',obj.Context);
             filename = sprintf('segment_%06d_after.mat',obj.Segment);
             save(fullfile(obj.Root,'snapshots',filename), 'snapshot', '-v7.3');
+        end
+        function exposure = decisionRewardExposure(obj,firstRow,lastRow)
+            obj.requireOpen();
+            assert(obj.RewardEnabled && ~isempty(obj.RewardAccumulator) && ...
+                obj.RewardAccumulator.first_row==firstRow && obj.RewardAccumulator.last_row==lastRow, ...
+                'ExactStateDataset:RewardRows','Reward requires the complete current decision row range.');
+            exposure = phase3reward.finishExposure(obj.RewardAccumulator);
         end
         function writeEpisode(obj, episode, stage, record)
             validateattributes(episode,{'numeric'},{'scalar','integer','positive'});
