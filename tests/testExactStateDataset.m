@@ -22,6 +22,7 @@ classdef testExactStateDataset < matlab.unittest.TestCase
             writer.finish('candidate_unit_complete');
             report = validate_exact_state_dataset(testCase.Folder);
             testCase.verifyEqual(report.rewards_reconstructed,1);
+            testCase.verifyEqual(report.windows_reconstructed,1);
             testCase.verifyTrue(report.valid);
         end
         function candidateRewardAnnotationMismatchRejected(testCase)
@@ -45,6 +46,28 @@ classdef testExactStateDataset < matlab.unittest.TestCase
             [writer,~] = testCase.candidateFixture();
             testCase.verifyError(@() writer.decisionRewardExposure(1,2),'ExactStateDataset:RewardRows');
             writer.finish('candidate_range_negative_control');
+        end
+        function forgedProgressRejectedEvenWithConsistentReward(testCase)
+            [writer,record,before,cfg,policy] = testCase.candidateFixture();
+            record.window.distance_end_m = 10;
+            [record.reward,record.reward_info] = compute_phase3_reward_candidate(record.window, ...
+                record.action_execution,writer.decisionRewardExposure(1,1),before,record.state,cfg,policy);
+            writer.writeDecision(1,1,record);
+            writer.finish('forged_progress_negative_control');
+            testCase.verifyError(@() validate_exact_state_dataset(testCase.Folder), ...
+                'validate_exact_state_dataset:WindowReconstruction');
+        end
+        function forgedTerminalRejectedEvenWithConsistentReward(testCase)
+            [writer,record,before,cfg,policy] = testCase.candidateFixture();
+            record.window.terminal_reason = 'mission_complete';
+            record.terminal_reason = 'mission_complete';
+            record.is_done = true;
+            [record.reward,record.reward_info] = compute_phase3_reward_candidate(record.window, ...
+                record.action_execution,writer.decisionRewardExposure(1,1),before,record.state,cfg,policy);
+            writer.writeDecision(1,1,record);
+            writer.finish('forged_terminal_negative_control');
+            testCase.verifyError(@() validate_exact_state_dataset(testCase.Folder), ...
+                'validate_exact_state_dataset:WindowReconstruction');
         end
         function roundTripHasLinkedExactQP(testCase)
             writer = ExactStateDataset(testCase.Folder,struct('test',true),testCase.Metadata);
@@ -128,12 +151,14 @@ classdef testExactStateDataset < matlab.unittest.TestCase
         end
     end
     methods (Access = private)
-        function [writer,record] = candidateFixture(testCase)
+        function [writer,record,before,cfg,policy] = candidateFixture(testCase)
             source = fileparts(fileparts(mfilename('fullpath')));
             bundle = load(fullfile(source,'rlEnv_MPC_R.mat'),'cfg');
             cfg = bundle.cfg;
             cfg.RANDOMIZE_REQUEST = false;
             cfg.BATTERY.use_pack_sizing = false;
+            cfg.CHUNK_DURATION = 0.01;
+            cfg.APPLY_EVERY = 1;
             policy = phase3reward.unitPolicy('unit_reference_experimental_v1');
             schema = 'reward_phase3_coverage_candidate_v1';
             cfg.PHASE3 = struct('reward_version',schema,'options',struct('reward_policy',policy));
@@ -141,31 +166,39 @@ classdef testExactStateDataset < matlab.unittest.TestCase
             metadata.reward_version = schema;
             writer = ExactStateDataset(testCase.Folder,cfg,metadata);
             [row,problem] = testCase.syntheticRow();
-            row.state_before.gait = 0;
-            row.state_before.current_time = [];
-            row.state_before.current_total = [];
-            row.state_after = row.state_before;
-            row.state_after.t = 0.01;
+            before = row.state_before;
+            before.gait = 0;
+            before.current_time = [];
+            before.current_total = [];
+            before.battery = struct('margin_norm',0.95,'soc_pct',95);
+            before.supervisory_state = struct('prev_gamma_a',row.action_execution.gamma_a_applied);
+            before.decision_bookkeeping = struct('initial_position_x',0,'distance_m',0, ...
+                'prev_Ieq_window',0,'a_exec',row.action_execution.a_exec,'observation',zeros(19,1));
+            after = before;
+            after.t = 0.01;
+            row.state_before = compact_exact_mpc_state(before);
+            row.state_after = compact_exact_mpc_state(after);
+            row.solver.classification = 'synthetic_success';
             health = struct('valid',true,'components',struct('orientation_error_rad',0, ...
                 'angular_velocity_norm',0),'linear_velocity_error',0);
             row.health_before = health;
             row.health_after = health;
-            writer.beginSegment(row.state_before,struct('episode',1,'decision',1,'chunk',1), ...
-                struct('simTimeStep',0.01),struct('action_execution',row.action_execution));
+            control = struct('action_execution',row.action_execution,'R',row.action_execution.R_applied, ...
+                'v_cmd',row.action_execution.v_exec,'a_cmd',row.action_execution.a_exec);
+            writer.beginSegment(before,struct('episode',1,'decision',1,'chunk',1), ...
+                struct('simTimeStep',0.01,'Tst',0.2),control);
             writer.append(row,problem);
-            writer.endSegment(row.state_after,struct('terminal_reason',''));
+            writer.endSegment(after,struct('terminal_reason','ignored_synthetic_annotation'));
             record = testCase.decisionRecord();
-            record.state = row.state_after;
+            record.state = after;
             record.state.decision_bookkeeping.observation = record.next_observation;
-            record.window = struct('tracking_error_mean',0,'control_effort_mean',0,'Ieq_window',0, ...
-                'soc_start_pct',95,'soc_end_pct',95,'lag_frac',0,'time_frac',0,'progress_frac',0, ...
-                'distance_start_m',0,'distance_end_m',0,'window_distance_m',0, ...
-                'v_exec',row.action_execution.v_exec,'a_exec',row.action_execution.a_exec, ...
-                'delta_v_exec',row.action_execution.delta_v_exec,'delta_gamma_v',0,'dR2',0, ...
-                'state_norm_proxy',0,'com_speed_mag',0,'terminal_reason','', ...
-                'battery',struct('margin_norm',0.95),'recovered_solver_events',0,'duration_s',0.01,'charge_As',0);
+            out = struct('tracking_error_sum',0,'control_effort_sum',0,'charge_As',0, ...
+                'integrated_steps',1,'completed_horizon',true,'terminal_reason','horizon_complete', ...
+                'stance_duration_end_s',0.2,'fsm_end',ones(4,1),'qp_solve_count',1,'qp_failed_count',0, ...
+                'trace',struct('solver_classification',"synthetic_success"));
+            record.window = phase3_decision_window(before,after,{out},control,cfg,'');
             [record.reward,record.reward_info] = compute_phase3_reward_candidate(record.window, ...
-                record.action_execution,writer.decisionRewardExposure(1,1),row.state_before,row.state_after,cfg,policy);
+                record.action_execution,writer.decisionRewardExposure(1,1),before,after,cfg,policy);
         end
     end
     methods (Static, Access = private)

@@ -32,8 +32,16 @@ or plant equations. Charge booking carries the preceding committed sample across
 decision boundaries. Startup absence and endpoint tails remain explicitly
 unobserved; the current model is not a hardware energy measurement.
 `validate_exact_state_dataset` reconstructs candidate reward/audit values and
-checks the saved current history against captured samples. Legacy datasets retain
-their previous validation path. Batch-quadrature parity has separate unit tests.
+checks the saved current history against captured samples. It also rebuilds
+chunk accounting/stop events from MPC rows, re-applies the declared terminal
+rule to captured post-chunk states, and reconstructs the full decision window.
+Recorded window, outcome and terminal annotations are not reconstruction inputs.
+This does not re-solve QP infeasibility, recalibrate safety or recompute the
+battery model; solver classifications and captured battery states remain inputs.
+Legacy datasets retain their default validation path; use
+`validate_exact_state_dataset(root,true)` for an explicit current-code window
+audit of a historical Phase-3 supervisory capture. Batch-quadrature parity and
+consistent-but-forged progress/terminal annotations have separate unit tests.
 
 The namespaced kernels in `+phase3reward` are deployed copies of the historical
 RL-MPC-Monitor candidate component/scale/scoring/exposure/charge contracts,

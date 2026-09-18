@@ -1,5 +1,11 @@
-function report = validate_exact_state_dataset(root)
+function report = validate_exact_state_dataset(root,reconstructWindows)
 %validate_exact_state_dataset Validate hashes, provenance and MPC continuity.
+% Candidate datasets always reconstruct windows; pass true to audit legacy
+% Phase-3 supervisory captures without rewriting their historical evidence.
+    if nargin<2
+        reconstructWindows = false;
+    end
+    validateattributes(reconstructWindows,{'logical'},{'scalar'});
     [exists, attributes] = fileattrib(root);
     assert(exists, 'validate_exact_state_dataset:MissingRoot', 'Dataset root is absent.');
     root = attributes.Name;
@@ -17,13 +23,16 @@ function report = validate_exact_state_dataset(root)
         manifest.configuration_sha256), 'validate_exact_state_dataset:ConfigHash', ...
         'Configuration bytes do not match manifest.');
     candidate = strcmp(manifest.reward_version,'reward_phase3_coverage_candidate_v1');
+    reconstructWindows = reconstructWindows || candidate;
     cfg = struct();
-    if candidate
+    if reconstructWindows
         configuration = load(fullfile(root,'manifest','configuration.mat'),'cfg');
         cfg = configuration.cfg;
         assert(strcmp(cfg.PHASE3.reward_version,manifest.reward_version), ...
             'validate_exact_state_dataset:RewardVersion','Reward configuration and manifest differ.');
-        phase3reward.validatePolicy(cfg.PHASE3.options.reward_policy,cfg);
+        if candidate
+            phase3reward.validatePolicy(cfg.PHASE3.options.reward_policy,cfg);
+        end
     end
     index = readtable(fullfile(root,'mpc_steps','index.csv'),'TextType','string');
     previous = [];
@@ -76,7 +85,7 @@ function report = validate_exact_state_dataset(root)
                 qpCount = qpCount+1;
             end
             previous = row;
-            if candidate
+            if reconstructWindows
                 range = decisionRanges(key);
                 if row.row_id==range.first
                     initial = load(localReference(root,row.snapshot_reference,verifiedHashes),'snapshot');
@@ -85,10 +94,21 @@ function report = validate_exact_state_dataset(root)
                     range.exposure = [];
                     range.sample_times = zeros(0,1);
                     range.sample_currents = zeros(0,1);
+                    range.chunks = cell(0,1);
                     assert(abs(range.before.t-row.time_before)<1e-10, ...
                         'validate_exact_state_dataset:RewardStart','First row is not the decision snapshot time.');
                 end
-                range.exposure = phase3reward.accumulate(range.exposure,row,range.dt);
+                if candidate
+                    range.exposure = phase3reward.accumulate(range.exposure,row,range.dt);
+                end
+                if isempty(range.chunks) || range.chunks{end}.segment~=row.segment
+                    initial = load(localReference(root,row.snapshot_reference,verifiedHashes),'snapshot');
+                    assert(strcmp(initial.snapshot.configuration_sha256,manifest.configuration_sha256), ...
+                        'validate_exact_state_dataset:ChunkConfig','Chunk snapshot configuration differs.');
+                    range.chunks{end+1} = phase3reward.accumulateChunk([],row,initial.snapshot,cfg);
+                else
+                    range.chunks{end} = phase3reward.accumulateChunk(range.chunks{end},row,[],cfg);
+                end
                 range.time_after = row.time_after;
                 if row.current_sample_committed
                     range.sample_times(end+1,1) = row.current_sample_time;
@@ -106,8 +126,9 @@ function report = validate_exact_state_dataset(root)
         'files',height(files),'source_sha',manifest.source_sha, ...
         'run_status',saved.completion.status, ...
         'restore_equivalence_tested',false);
-    [report.supervisory_records,report.supervisory_decisions_complete,report.rewards_reconstructed] = ...
-        localValidateEvents(root,manifest,decisionRanges,verifiedHashes,cfg);
+    [report.supervisory_records,report.supervisory_decisions_complete,report.rewards_reconstructed, ...
+        report.windows_reconstructed] = localValidateEvents(root,manifest,decisionRanges,verifiedHashes,cfg,reconstructWindows);
+    report.window_reconstruction_version = 'captured_decision_window_reconstruction_v1';
     if isfield(manifest,'supervisory_records_required') && manifest.supervisory_records_required && ...
             ~strcmp(saved.completion.status,'environment_exception')
         assert(report.supervisory_decisions_complete, ...
@@ -115,10 +136,11 @@ function report = validate_exact_state_dataset(root)
     end
 end
 
-function [count,complete,reconstructed] = localValidateEvents(root, manifest, ranges, hashes,cfg)
+function [count,complete,reconstructed,windowCount] = localValidateEvents(root, manifest, ranges, hashes,cfg,reconstructWindows)
     files = [dir(fullfile(root,'episodes','*.mat'));dir(fullfile(root,'decisions','*.mat'))];
     count = numel(files);
     reconstructed = 0;
+    windowCount = 0;
     seen = containers.Map('KeyType','char','ValueType','logical');
     for k = 1:count
         path = fullfile(files(k).folder,files(k).name);
@@ -146,6 +168,26 @@ function [count,complete,reconstructed] = localValidateEvents(root, manifest, ra
                 isfinite(record.reward) && all(isfinite(record.observation)) && ...
                 all(isfinite(record.next_observation)), ...
                 'validate_exact_state_dataset:DecisionObservation','Decision observation/reward is inconsistent.');
+            if reconstructWindows
+                chunks = cell(size(range.chunks));
+                for j = 1:numel(chunks)
+                    relative = sprintf('snapshots/segment_%06d_after.mat',range.chunks{j}.segment);
+                    target = localArtifact(root,relative);
+                    assert(isKey(hashes,target), ...
+                        'validate_exact_state_dataset:ChunkHash','Post-chunk snapshot is not checksummed.');
+                    post = load(target,'snapshot');
+                    assert(isequal(post.snapshot.context,range.chunks{j}.context), ...
+                        'validate_exact_state_dataset:ChunkContext','Post-chunk context differs.');
+                    chunks{j} = phase3reward.finishChunk(range.chunks{j},post.snapshot.state);
+                end
+                [window,terminal,audit] = phase3reward.reconstructWindow(chunks,cfg);
+                assert(isequaln(window,record.window) && strcmp(terminal,record.terminal_reason) && ...
+                    isequal(audit.is_done,record.is_done) && ...
+                    isequaln(record.state.battery,chunks{end}.after.battery) && ...
+                    record.state.decision_bookkeeping.distance_m==window.distance_end_m, ...
+                    'validate_exact_state_dataset:WindowReconstruction','Window, terminal or endpoint bookkeeping differs from captured evidence.');
+                windowCount = windowCount+1;
+            end
             if strcmp(manifest.reward_version,'reward_phase3_coverage_candidate_v1')
                 assert(isequal(record.state.current_time(:),[range.before.current_time(:);range.sample_times]) && ...
                     isequal(record.state.current_total(:),[range.before.current_total(:);range.sample_currents]) && ...
@@ -153,7 +195,7 @@ function [count,complete,reconstructed] = localValidateEvents(root, manifest, ra
                     strcmp(record.terminal_reason,record.window.terminal_reason), ...
                     'validate_exact_state_dataset:RewardHistory','Decision differs from captured current/time/terminal history.');
                 exposure = phase3reward.finishExposure(range.exposure);
-                [reward,info] = compute_phase3_reward_candidate(record.window,record.action_execution, ...
+                [reward,info] = compute_phase3_reward_candidate(window,record.action_execution, ...
                     exposure,range.before,record.state,cfg,cfg.PHASE3.options.reward_policy);
                 assert(isequaln(reward,record.reward) && isequaln(info,record.reward_info), ...
                     'validate_exact_state_dataset:RewardReconstruction','Candidate reward or audit differs from captured evidence.');
