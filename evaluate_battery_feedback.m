@@ -1,4 +1,9 @@
 function battery = evaluate_battery_feedback(timeTrace, currentTrace, cfg, packIn)
+% Missing feedback_version retains the historical prefix-current behavior.
+if strcmp(phase3battery.version(cfg),'battery_feedback_timestamp_aligned_v2')
+    battery = phase3battery.evaluateAligned(timeTrace,currentTrace,cfg);
+    return
+end
 rootDir = fileparts(mfilename('fullpath'));
 
 timeTrace = timeTrace(:);

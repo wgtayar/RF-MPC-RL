@@ -17,6 +17,23 @@ classdef testPhase3EnvironmentContract < matlab.unittest.TestCase
         end
     end
     methods (Test)
+        function batteryVersionIsCapturedWithoutPromotion(testCase)
+            bundle = testCase.Bundle;
+            bundle.cfg.BATTERY.feedback_version = 'battery_feedback_timestamp_aligned_v2';
+            env = Phase3MpcEnvironment(bundle,testCase.Folder,testCase.Metadata);
+            testCase.verifyEqual(env.Config.PHASE3.battery_feedback_version,bundle.cfg.BATTERY.feedback_version);
+            testCase.verifyEqual(env.Writer.Manifest.battery_feedback_version,bundle.cfg.BATTERY.feedback_version);
+            testCase.verifyFalse(env.Config.PHASE3.training_promoted);
+            testCase.verifyEqual(env.Writer.RowCount,0);
+            close(env,'unit_test_complete');
+        end
+        function unknownBatteryVersionDoesNotCreateDataset(testCase)
+            bundle = testCase.Bundle;
+            bundle.cfg.BATTERY.feedback_version = 'unknown';
+            testCase.verifyError(@()Phase3MpcEnvironment(bundle,testCase.Folder,testCase.Metadata), ...
+                'phase3battery:Version');
+            testCase.verifyFalse(isfolder(testCase.Folder));
+        end
         function constructorDoesNotRunThePlant(testCase)
             env = Phase3MpcEnvironment(testCase.Bundle,testCase.Folder,testCase.Metadata);
             testCase.verifyEqual(env.Writer.RowCount,0);

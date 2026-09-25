@@ -29,6 +29,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             assert(all(isfield(bundle,{'cfg','initial_R','lower_abs','upper_abs'})), ...
                 'Phase3MpcEnvironment:Bundle','Explicit config, initial R and bounds are required.');
             cfg = bundle.cfg;
+            batteryFeedbackVersion = phase3battery.version(cfg.BATTERY);
             options = localOptions(options);
             p = get_params(0);
             validateattributes(cfg.APPLY_EVERY,{'double'},{'scalar','integer','positive'});
@@ -80,6 +81,10 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             metadata.environment_version = cfg.PHASE3.environment_version;
             metadata.training_promoted = false;
             metadata.supervisory_records_required = true;
+            if isfield(cfg.BATTERY,'feedback_version')
+                cfg.PHASE3.battery_feedback_version = batteryFeedbackVersion;
+                metadata.battery_feedback_version = batteryFeedbackVersion;
+            end
             metadata.seed = cfg.RNG_SEED;
             obj.Config = cfg;
             obj.InitialR = bundle.initial_R(:);
