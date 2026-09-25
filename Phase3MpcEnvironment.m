@@ -81,9 +81,9 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             metadata.environment_version = cfg.PHASE3.environment_version;
             metadata.training_promoted = false;
             metadata.supervisory_records_required = true;
+            metadata.battery_feedback_version = batteryFeedbackVersion;
             if isfield(cfg.BATTERY,'feedback_version')
                 cfg.PHASE3.battery_feedback_version = batteryFeedbackVersion;
-                metadata.battery_feedback_version = batteryFeedbackVersion;
             end
             metadata.seed = cfg.RNG_SEED;
             obj.Config = cfg;

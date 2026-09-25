@@ -30,17 +30,21 @@ function [battery,audit] = evaluateAligned(timeTrace,currentTrace,cfg)
     inputPackCurrent = abs(currentTrace(indices));
     if cfg.use_pack_sizing
         [nSeries,nParallel] = batterySizing(tEval,inputPackCurrent,cfg.pack_voltage,cfg.DoD);
+        validateattributes(nParallel,{'double'},{'scalar','real','finite','integer','nonnegative'});
     else
         nSeries = cfg.n_series;
         nParallel = cfg.n_parallel;
+        validateattributes(nParallel,{'double'},{'scalar','real','finite','integer','positive'});
     end
-    validateattributes(nParallel,{'double'},{'scalar','real','finite','integer','positive'});
-    [~,tBatt,voltage] = model_battery(inputPackCurrent/nParallel,tEval,cfg.C_nom_Ah,cfg.SOC_init,false);
+    % Preserve the legacy one-cell divisor when sizing a zero-load trace returns zero.
+    effectiveParallel = max(nParallel,1);
+    audit.effective_parallel_divisor = effectiveParallel;
+    [~,tBatt,voltage] = model_battery(inputPackCurrent/effectiveParallel,tEval,cfg.C_nom_Ah,cfg.SOC_init,false);
     tBatt = tBatt(:);
     voltage = voltage(:);
     assert(numel(tBatt)==numel(voltage),'phase3battery:Length','Battery output lengths differ.');
     validateattributes(voltage,{'double'},{'real','finite'});
-    [packCurrent,cellCurrent,retained] = phase3battery.alignSamples(tEval,inputPackCurrent,tBatt,nParallel);
+    [packCurrent,cellCurrent,retained] = phase3battery.alignSamples(tEval,inputPackCurrent,tBatt,effectiveParallel);
     audit.retained_decimated_indices = retained;
     audit.retained_history_indices = indices(retained);
     battery.n_series = nSeries;

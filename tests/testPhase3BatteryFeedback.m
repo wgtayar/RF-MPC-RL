@@ -4,11 +4,46 @@ classdef testPhase3BatteryFeedback < matlab.unittest.TestCase
     end
     methods (TestMethodSetup)
         function config(testCase)
+            testCase.applyFixture(matlab.unittest.fixtures.CurrentFolderFixture(bootstrap_RF_MPC_RL()));
             testCase.Config = struct('SOC_init',0.95,'n_series',4,'n_parallel',6, ...
-                'decim',10,'use_pack_sizing',false,'C_nom_Ah',2);
+                'decim',10,'use_pack_sizing',false,'C_nom_Ah',2,'pack_voltage',12,'DoD',.8);
         end
     end
     methods (Test)
+        function automaticZeroLoadKeepsLegacyPackConvention(testCase)
+            cfg = testCase.Config; cfg.use_pack_sizing = true;
+            times = (0:.01:2).'; currents = zeros(size(times));
+            expected = evaluate_battery_feedback(times,currents,cfg);
+            cfg.feedback_version = 'battery_feedback_timestamp_aligned_v2';
+            [actual,audit] = phase3battery.evaluateAligned(times,currents,cfg);
+            testCase.verifyEqual(actual,expected);
+            testCase.verifyEqual(actual.n_parallel,0);
+            testCase.verifyNotEmpty(actual.bms_input);
+            testCase.verifyTrue(all(isfinite(actual.trace_metric)));
+            testCase.verifyEqual(audit.effective_parallel_divisor,1);
+            testCase.verifyEqual(evaluate_battery_feedback(times,currents,cfg),actual);
+        end
+        function fixedZeroParallelCountIsInvalid(testCase)
+            cfg = testCase.Config; cfg.n_parallel = 0;
+            testCase.verifyError(@()phase3battery.evaluateAligned((0:.01:2).',ones(201,1),cfg), ...
+                'MATLAB:expectedPositive');
+        end
+        function nonemptyDispatchMatchesOriginalHistoryIndices(testCase)
+            cfg = testCase.Config; cfg.feedback_version = 'battery_feedback_timestamp_aligned_v2';
+            times = (0:.01:2.03).'; currents = 10+3*sin(7*times);
+            [expected,audit] = phase3battery.evaluateAligned(times,currents,cfg);
+            testCase.verifyEqual(evaluate_battery_feedback(times,currents,cfg),expected);
+            testCase.verifyEqual(expected.bms_input.Time,times(audit.retained_history_indices));
+            testCase.verifyEqual(expected.bms_input.PackCurrent,currents(audit.retained_history_indices));
+            testCase.verifyEqual(audit.retained_history_indices(end),numel(times));
+        end
+        function packInputDoesNotReinitializeFullHistoryReplay(testCase)
+            cfg = testCase.Config; cfg.feedback_version = 'battery_feedback_timestamp_aligned_v2';
+            times = (0:.01:2).'; currents = 10+3*sin(7*times);
+            a = evaluate_battery_feedback(times,currents,cfg,struct('soc_pct',20));
+            b = evaluate_battery_feedback(times,currents,cfg,struct('soc_pct',95));
+            testCase.verifyEqual(a,b);
+        end
         function missingVersionIsHistorical(testCase)
             testCase.verifyEqual(phase3battery.version(testCase.Config),'battery_feedback_legacy_prefix_v1');
         end

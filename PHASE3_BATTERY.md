@@ -11,6 +11,9 @@ the historical evaluate_battery_feedback implementation. No protected MAT file,
 setup default, old dataset, SOC trace or label is rewritten. The captured environment
 validates the version before creating its dataset, records it in configuration and
 manifest metadata, and requires identical configuration for saved-decision resume.
+The manifest always records the resolved version, overriding stale caller labels
+even when configuration omits the field. Historical configuration shape remains
+unchanged for implicit legacy mode, so old exact-resume configs are not relabeled.
 
 The battery model returns a subset of its input timestamps after filtering SOC
 rows. Legacy feedback paired those returned time/voltage rows with a prefix of the
@@ -24,6 +27,12 @@ The same model_battery, estimateSOC, parameter spreadsheet, full-history replay,
 decimation, absolute-current convention, initial SOC and pack sizing are retained.
 Previous battery state is not used to initialize replay: doing so would double
 count history. Invalid time ordering/subsets or inconsistent shapes fail closed.
+If automatic zero-load sizing returns zero parallel cells, retain that historical
+reported count and use the same max(n_parallel,1) divisor as legacy feedback.
+The audit records this effective divisor; zero cells is not a deployable pack design.
+An explicitly configured fixed-pack count must still be positive. The legacy
+automatic-sizing function's zero-load printed NaN diagnostics are not consumed
+by feedback and remain unchanged; they are not measured energy results.
 This correction does not establish hardware SOC accuracy or calibrate safety.
 
 The prior training-only battery impact study reproduced176 archived legacy states

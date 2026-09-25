@@ -17,6 +17,14 @@ classdef testPhase3EnvironmentContract < matlab.unittest.TestCase
         end
     end
     methods (Test)
+        function staleMetadataCannotRelabelImplicitLegacy(testCase)
+            metadata = testCase.Metadata;
+            metadata.battery_feedback_version = 'battery_feedback_timestamp_aligned_v2';
+            env = Phase3MpcEnvironment(testCase.Bundle,testCase.Folder,metadata);
+            testCase.verifyEqual(env.Writer.Manifest.battery_feedback_version,'battery_feedback_legacy_prefix_v1');
+            testCase.verifyFalse(isfield(env.Config.PHASE3,'battery_feedback_version'));
+            close(env,'unit_test_complete');
+        end
         function batteryVersionIsCapturedWithoutPromotion(testCase)
             bundle = testCase.Bundle;
             bundle.cfg.BATTERY.feedback_version = 'battery_feedback_timestamp_aligned_v2';
