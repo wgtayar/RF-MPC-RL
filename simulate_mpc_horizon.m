@@ -7,7 +7,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     options = localDefaults(options, cfg);
     if ~isempty(options.stop_at_position_x_m)
         validateattributes(options.stop_at_position_x_m,{'double'},{'scalar','real','finite'});
-        assert(isfinite(state.Xt(1)) && state.Xt(1)<options.stop_at_position_x_m, ...
+        assert(isreal(state.Xt(1)) && isfinite(state.Xt(1)) && state.Xt(1)<options.stop_at_position_x_m, ...
             'simulate_mpc_horizon:TargetAlreadyReached', ...
             'A target-stop continuation must start strictly before its target.');
     end
@@ -171,7 +171,8 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             traceRows(traceCount) = localTraceAfter( ...
                 traceRows(traceCount), state.Xt, state.Ut, Xd);
         end
-        if any(~isfinite(state.Xt))
+        if ~isreal([state.Xt(:);state.Ut(:);Xd(:)]) || ...
+                any(~isfinite([state.Xt(:);state.Ut(:);Xd(:)]))
             terminalReason = "invalid_state";
             if ~isempty(writer)
                 localCapture(writer, exactBefore, state, time, iteration, ...
@@ -369,14 +370,15 @@ function row = localTraceBefore(time, iteration, strategy, solver, ...
     row.fsm_leg2 = FSM(2);
     row.fsm_leg3 = FSM(3);
     row.fsm_leg4 = FSM(4);
-    before = decompose_srb_state(Xt, Xd(:, 1));
-    row.orientation_error_before_rad = before.orientation_error_rad;
-    row.angular_velocity_before = before.angular_velocity_norm;
-    row.linear_velocity_error_before = norm(Xt(4:6) - Xd(4:6, 1));
-    row.com_velocity_before = norm(Xt(4:6));
-    row.position_invariant_norm_before = ...
-        before.position_invariant_state_norm;
-    row.Ut_norm_before = norm(Ut);
+    if isreal([Xt(:);Ut(:);Xd(:)]) && all(isfinite([Xt(:);Ut(:);Xd(:)]))
+        before = decompose_srb_state(Xt, Xd(:, 1));
+        row.orientation_error_before_rad = before.orientation_error_rad;
+        row.angular_velocity_before = before.angular_velocity_norm;
+        row.linear_velocity_error_before = norm(Xt(4:6) - Xd(4:6, 1));
+        row.com_velocity_before = norm(Xt(4:6));
+        row.position_invariant_norm_before = before.position_invariant_state_norm;
+        row.Ut_norm_before = norm(Ut);
+    end
     row.desired_force_norm = norm(Ud(:, 1));
     row.knee_plus_hip_current_A = current;
     row.R1 = control.R(1);
@@ -394,6 +396,11 @@ function row = localTraceBefore(time, iteration, strategy, solver, ...
 end
 
 function row = localTraceAfter(row, Xt, Ut, Xd)
+    % Invalid integration output must reach capture/terminal handling, not throw
+    % inside diagnostic decomposition first. Leave unavailable health as NaN.
+    if ~isreal([Xt(:);Ut(:);Xd(:)]) || any(~isfinite([Xt(:);Ut(:);Xd(:)]))
+        return
+    end
     after = decompose_srb_state(Xt, Xd(:, 1));
     row.orientation_error_after_rad = after.orientation_error_rad;
     row.angular_velocity_after = after.angular_velocity_norm;

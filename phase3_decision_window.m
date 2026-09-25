@@ -3,12 +3,15 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
     bookkeeping = before.decision_bookkeeping;
     % Invalid raw states remain in the dataset. Only terminal observation/reward
     % features use this explicit last-valid fallback, never the physical state.
-    invalidFeatures = any(~isfinite(after.Xt)) || ...
-        any(~isfinite([after.battery.margin_norm,after.battery.soc_pct]));
-    if any(~isfinite(after.Xt))
+    invalidXt = ~isreal(after.Xt) || any(~isfinite(after.Xt(:)));
+    invalidUt = ~isreal(after.Ut) || any(~isfinite(after.Ut(:)));
+    batteryValues = [after.battery.margin_norm,after.battery.soc_pct];
+    invalidBattery = ~isreal(batteryValues) || any(~isfinite(batteryValues));
+    invalidFeatures = invalidXt || invalidUt || invalidBattery;
+    if invalidXt
         after.Xt = before.Xt;
     end
-    if any(~isfinite([after.battery.margin_norm,after.battery.soc_pct]))
+    if invalidBattery
         after.battery = before.battery;
     end
     distance = max(0,after.Xt(1)-bookkeeping.initial_position_x);
@@ -58,7 +61,8 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
     window.state_norm_proxy = norm(after.Xt);
     window.tst_ratio = chunks{end}.stance_duration_end_s/cfg.OBS.NOMINAL_TST;
     window.fsm_proxy = chunks{end}.fsm_end(1)-1;
-    if ~isfinite(window.tst_ratio) || ~isfinite(window.fsm_proxy)
+    if ~isreal([window.tst_ratio,window.fsm_proxy]) || ...
+            ~isfinite(window.tst_ratio) || ~isfinite(window.fsm_proxy)
         window.invalid_state_feature_fallback = true;
         window.tst_ratio = 1;
         window.fsm_proxy = 0;

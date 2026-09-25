@@ -43,7 +43,8 @@ function a = accumulateChunk(a,row,snapshot,cfg)
         assert(isfield(row.solver,'integration_exception'), ...
             'phase3window:Integration','Successful unintegrated attempt needs an explicit integration exception.');
         a.reason = "integration_exception";
-    elseif any(~isfinite(row.state_after.Xt))
+    elseif ~isreal([row.state_after.Xt(:);row.state_after.Ut(:);row.Xd(:)]) || ...
+            any(~isfinite([row.state_after.Xt(:);row.state_after.Ut(:);row.Xd(:)]))
         a.reason = "invalid_state";
     else
         a.integrated_steps = a.integrated_steps+1;
