@@ -25,6 +25,9 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     p.yaw_d = 0;
     [state.reference_state, referenceOffset] = update_reference_position_offset(state,control);
     p.reference_position_offset_m = referenceOffset;
+    if options.enable_repository_disturbance
+        p.phase3_repository_disturbance = true;
+    end
 
     dt = p.simTimeStep;
     numberSteps = max(0, round(options.duration_s/dt));
@@ -44,6 +47,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     integratedSteps = 0;
     lastFsm = nan(4,1);
     lastStanceDuration = NaN;
+    disturbanceSamples = zeros(0,7);
     writer = options.dataset_writer;
     if ~isempty(writer)
         writer.beginSegment(state, options.dataset_context, p, control);
@@ -147,7 +151,12 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         state.Ut = state.Ut + solver.z(1:12);
         [uExt, pExt] = fcn_get_disturbance(time, p);
         p.p_ext = pExt;
-        uExt = 0*uExt;
+        if ~options.enable_repository_disturbance
+            uExt = 0*uExt;
+        else
+            % Fixed existing profile, sampled once per MPC integration step.
+            disturbanceSamples(end+1,:) = [time,uExt(:).',pExt(:).']; %#ok<AGROW>
+        end
         try
             [~, stateHistory] = ode45( ...
                 @(t, X) dynamics_SRB(t, X, state.Ut, Xd, uExt, p), ...
@@ -251,12 +260,22 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     out.charge_As = localTrapzCharge( ...
         state.current_time, state.current_total) - chargeStart;
     out.Ieq_A = out.charge_As/max(out.survived_duration_s, eps);
+    if options.enable_repository_disturbance
+        out.disturbance = struct('profile','repository_lateral_bezier_v1', ...
+            'columns',{{'time_s','Fx_N','Fy_N','Fz_N','px_body_m','py_body_m','pz_body_m'}}, ...
+            'integration_attempt_samples',disturbanceSamples, ...
+            'scope','Existing profile, zero-order-held per MPC step; not an actuator or safety model.');
+    end
     if ~isempty(writer)
         writer.endSegment(state, out);
     end
 end
 
 function options = localDefaults(options, cfg)
+    options = localSetDefault(options, 'enable_repository_disturbance', false);
+    assert(islogical(options.enable_repository_disturbance) && ...
+        isscalar(options.enable_repository_disturbance), ...
+        'simulate_mpc_horizon:DisturbanceOption','Require an explicit scalar logical disturbance flag.');
     options = localSetDefault(options, 'duration_s', cfg.CHUNK_DURATION);
     options = localSetDefault(options, 'solver_strategy', "default");
     options = localSetDefault(options, 'switch_time_s', inf);
