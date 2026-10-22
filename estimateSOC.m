@@ -1,7 +1,10 @@
-function [SOC] = estimateSOC(time, I_total, V_batt, C_nom, SOC_init, doPlot)
+function [SOC] = estimateSOC(time, I_total, V_batt, C_nom, SOC_init, doPlot, options)
 
 if nargin < 6
     doPlot = false;
+end
+if nargin < 7
+    options = struct();
 end
 
 N0 = min([length(time), length(I_total), length(V_batt)]);
@@ -12,7 +15,7 @@ V_batt  = V_batt (1:N0);
 N = length(time);
 
 % Load parameters
-params = readtable('our params.xlsx');
+[params, noise] = phase3battery.resolveModelOptions(options,'our params.xlsx');
 valid_idx = isfinite(params.SOC) & isfinite(params.OCV);
 
 SOC_table = params.SOC(valid_idx);
@@ -69,16 +72,9 @@ C3_fun = @(soc) manualInterp(SOC_table,C3_table,soc);
 dOCV_fun = @(soc) manualInterp(SOC_table, dOCV_table, soc);
 
 % EKF noise parameters
-q_soc  = 1e-7;
-q_vrc1 = 1e-3;
-q_vrc2 = 1e-3;
-q_vrc3 = 1e-3;
-
-Q = diag([q_soc q_vrc1 q_vrc2 q_vrc3]);
-
-R_kf = 1e-3;
-
-P = diag([1e-4 1e-3 1e-3 1e-3]);
+Q = noise.process_covariance;
+R_kf = noise.measurement_variance;
+P = noise.initial_covariance;
 
 % Initialization
 step_time = [0; diff(time)];

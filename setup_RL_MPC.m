@@ -62,20 +62,9 @@ function setup_RL_MPC()
     cfg.EFFORT_REF = 5.4e4;
     cfg.IEQ_REF = 90;
 
-    cfg.BATTERY.metric_type = 'soc';
-    cfg.BATTERY.SOC_init = 0.95;
-    cfg.BATTERY.metric_init = 100 * cfg.BATTERY.SOC_init;
-    cfg.BATTERY.metric_min = 20;
-    cfg.BATTERY.metric_max = 100;
-    cfg.BATTERY.terminal_margin = 0.2;
-    cfg.BATTERY.C_nom_Ah = 2.0;
-    cfg.BATTERY.pack_voltage = 12;
-    cfg.BATTERY.DoD = 0.8;
-    cfg.BATTERY.use_pack_sizing = false;
-    cfg.BATTERY.n_series = 4;
-    cfg.BATTERY.n_parallel = 6;
-    cfg.BATTERY.decim = 10;
-    cfg.BATTERY.make_plots = false;
+    % Working manuscript profile: empirical table, explicit assumptions and
+    % replaceable cell/pack/EKF settings. Saved legacy configs are unchanged.
+    cfg.BATTERY = phase3battery.manuscriptConfig();
 
     cfg.PROXY.betaMc = 0.5;
     cfg.PROXY.kneeCsv = fullfile(rootDir, 'Symmetric Knee Torques.csv');
@@ -335,3 +324,4 @@ function setup_RL_MPC()
         cfg.MISSION.D_TARGET_M, cfg.GAMMA_V_MAX, ...
         cfg.V_MIN + cfg.GAMMA_V_MAX * (cfg.V_MAX - cfg.V_MIN), cfg.DR_MAX);
 end
+

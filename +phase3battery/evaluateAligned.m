@@ -39,7 +39,11 @@ function [battery,audit] = evaluateAligned(timeTrace,currentTrace,cfg)
     % Preserve the legacy one-cell divisor when sizing a zero-load trace returns zero.
     effectiveParallel = max(nParallel,1);
     audit.effective_parallel_divisor = effectiveParallel;
-    [~,tBatt,voltage] = model_battery(inputPackCurrent/effectiveParallel,tEval,cfg.C_nom_Ah,cfg.SOC_init,false);
+    modelOptions = struct();
+    if isfield(cfg,'model_options')
+        modelOptions = cfg.model_options;
+    end
+    [~,tBatt,voltage] = model_battery(inputPackCurrent/effectiveParallel,tEval,cfg.C_nom_Ah,cfg.SOC_init,false,modelOptions);
     tBatt = tBatt(:);
     voltage = voltage(:);
     assert(numel(tBatt)==numel(voltage),'phase3battery:Length','Battery output lengths differ.');
@@ -52,7 +56,7 @@ function [battery,audit] = evaluateAligned(timeTrace,currentTrace,cfg)
     if numel(tBatt)<2
         return
     end
-    SOC = estimateSOC(tBatt,cellCurrent,voltage,cfg.C_nom_Ah,cfg.SOC_init,false);
+    SOC = estimateSOC(tBatt,cellCurrent,voltage,cfg.C_nom_Ah,cfg.SOC_init,false,modelOptions);
     SOC = SOC(:);
     validateattributes(SOC,{'double'},{'real','finite','column','numel',numel(tBatt)});
     battery.soc_pct = min(max(SOC(end),0),100);
@@ -65,3 +69,4 @@ function [battery,audit] = evaluateAligned(timeTrace,currentTrace,cfg)
     battery.bms_input = table(tBatt,packCurrent,cellCurrent,voltage,SOC, ...
         'VariableNames',{'Time','PackCurrent','CellCurrent','Voltage','SOC'});
 end
+
