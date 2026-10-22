@@ -1,5 +1,12 @@
 # Versioned Battery Feedback
 
+New setups now select the manuscript working profile through
+`phase3battery.manuscriptConfig`. Its replaceable parameter table/workbook and
+EKF settings are passed to both model and estimator. See
+[working assumptions](BATTERY_MANUSCRIPT_ASSUMPTIONS.md). Existing configurations
+without `model_options` retain historical EKF constants; the version-selection
+rules below continue to apply to saved configurations.
+
 Future Phase-3 runs can explicitly select the timestamp/current alignment fix:
 
 ```matlab
@@ -46,3 +53,4 @@ but do not start robot RL or promote a reward/safety policy from this fix alone.
 The frozen6321cc9 full-state predictor contract is historical and deliberately
 rejects changed source. It must not be relabeled as compatible with this new
 runtime; any new predictor/source binding requires its own audited version.
+

@@ -1,7 +1,10 @@
-function [dt, time_trim , Vsim_trim] = model_battery(current, time, C_nom, SOC_init, verbose)
+function [dt, time_trim , Vsim_trim] = model_battery(current, time, C_nom, SOC_init, verbose, options)
 
 if nargin < 5
     verbose = true;
+end
+if nargin < 6
+    options = struct();
 end
 
 SOC_min = 0.20;     
@@ -9,7 +12,7 @@ SOC_max = 1.00;
 
 % Parameter lookup tables 
 rootDir = fileparts(mfilename('fullpath'));
-params = readtable(fullfile(rootDir, 'our params.xlsx'));
+[params, settings] = phase3battery.resolveModelOptions(options,fullfile(rootDir, 'our params.xlsx'));
 params = params(params.SOC >= SOC_min, :);
 
 SOC_lookup = params.SOC;
@@ -114,6 +117,8 @@ end
 idx_valid = SOC_vector >= SOC_min;
 time_trim  = time(idx_valid);
 Vsim_trim  = V_battery(idx_valid);
-Vsim_trim = lowpass(Vsim_trim,0.04,1/dt);
+if strcmp(settings.voltage_filter,'legacy_lowpass')
+    Vsim_trim = lowpass(Vsim_trim,0.04,1/dt);
+end
 
 end

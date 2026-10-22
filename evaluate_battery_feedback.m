@@ -48,7 +48,11 @@ end
 
 iCell = iPack / max(n_parallel, 1);
 
-[~, tBatt, VBatt] = model_battery(iCell, tEval, cfg.C_nom_Ah, cfg.SOC_init, false);
+modelOptions = struct();
+if isfield(cfg,'model_options')
+    modelOptions = cfg.model_options;
+end
+[~, tBatt, VBatt] = model_battery(iCell, tEval, cfg.C_nom_Ah, cfg.SOC_init, false, modelOptions);
 
 N = min([numel(tBatt), numel(iCell), numel(VBatt)]);
 tBatt = tBatt(1:N);
@@ -61,7 +65,7 @@ if N < 2
     return
 end
 
-SOC = estimateSOC(tBatt, iCell, VBatt, cfg.C_nom_Ah, cfg.SOC_init, false);
+SOC = estimateSOC(tBatt, iCell, VBatt, cfg.C_nom_Ah, cfg.SOC_init, false, modelOptions);
 SOC = SOC(:);
 
 soc_pct = SOC(end);
@@ -80,3 +84,4 @@ battery.trace_metric = SOC;
 battery.bms_input = table(tBatt, iPack(1:N), iCell, VBatt, SOC, ...
     'VariableNames', {'Time', 'PackCurrent', 'CellCurrent', 'Voltage', 'SOC'});
 end
+
