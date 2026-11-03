@@ -13,6 +13,8 @@ function metrics = phase3_episode_metrics(root, cfg, episode)
     samples = nan(size(values,1),2);
     jointEnergy=isfield(cfg,'ENERGY');
     ledger=nan(size(values,1),6);
+    actuatorLimits=nan(size(values,1),2);
+    energyCommitted=false(size(values,1),1);
     count = 0;
     sampleCount = 0;
     initial = struct();
@@ -47,6 +49,8 @@ function metrics = phase3_episode_metrics(root, cfg, episode)
                 a0=row.state_before.energy; a1=row.state_after.energy;
                 ledger(count,:)=[a0.chargeAs a1.chargeAs a0.energyWh a1.energyWh ...
                     row.state_before.battery.soc_pct row.state_after.battery.soc_pct];
+                actuatorLimits(count,:)=[a1.voltageLimitSteps a1.torqueLimitSteps];
+                energyCommitted(count)=row.current_sample_committed;
             end
             lastSegment = row.segment;
         end
@@ -63,6 +67,9 @@ function metrics = phase3_episode_metrics(root, cfg, episode)
         'distance_before',T.x_before-origin,'distance_after',T.x_after-origin);
     if jointEnergy
         current.ledger=ledger(1:count,:);
+        steps.voltage_limit_steps=actuatorLimits(1:count,1);
+        steps.torque_limit_steps=actuatorLimits(1:count,2);
+        steps.energy_committed=energyCommitted(1:count);
     end
     crossing = phase3_target_crossing(steps,cfg.MISSION.D_TARGET_M,current,cfg.BATTERY);
     duration = finalState.t-initial.t;

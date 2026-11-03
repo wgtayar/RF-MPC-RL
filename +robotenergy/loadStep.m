@@ -28,7 +28,11 @@ i=motor/e.phaseKt; copper=.75*e.lineResistance*i.^2;
 shaft=motor.*(e.ratio.*speed);
 m.watts=e.auxW+sum(max(0,shaft+copper),'all')/e.inverterEfficiency;
 m.peakTorque=max(abs(motor),[],'all');
-[m.requiredV,k]=max(abs(e.lineResistance*i+2*e.fluxPolePairs*e.ratio.*speed),[],'all','linear');
+m.motorSpeed=e.ratio.*speed;
+m.motorTorque=motor;
+m.phaseCurrent=i;
+m.motorVoltage=e.lineResistance*i+2*e.fluxPolePairs*m.motorSpeed;
+[m.requiredV,k]=max(abs(m.motorVoltage),[],'all','linear');
 [m.voltageAxis,m.voltageLeg]=ind2sub(size(speed),k); m.voltageFSM=fsm.FSM(m.voltageLeg);
 m.copperW=sum(copper,'all'); m.jointTorque=tau; m.jointSpeed=speed;
 end

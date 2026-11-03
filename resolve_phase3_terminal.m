@@ -20,7 +20,8 @@ function [reason, isDone] = resolve_phase3_terminal(state, out, distance, cfg)
                 reason = 'numerical_solver_failure_unrecovered';
             case {'mathematical_constraint_infeasible','mathematical_infeasibility'}
                 reason = 'mathematical_constraint_infeasible';
-            case {'invalid_state','dynamic_safety_violation','no_safe_action_available'}
+            case {'invalid_state','dynamic_safety_violation','no_safe_action_available', ...
+                    'battery_power_limit','leg_reach_limit','battery_depleted'}
                 reason = char(out.terminal_reason);
             otherwise
                 reason = 'unclassified_solver_failure';

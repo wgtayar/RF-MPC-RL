@@ -160,10 +160,17 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     lastSuccessfulQp = struct();
     lastQpOutput = struct();
     lastLambda = struct();
+    energyAttempt = false;
+    unexpectedEnergyException = [];
 
     try
         for ii = 1:max_iter
             t0_abs = Sim.t + dt_sim * (ii - 1);
+            if physical
+                acceptedSim=Sim; acceptedXt=Xt; acceptedUt=Ut;
+                acceptedFsm=fsmInternalState;
+            end
+            energyAttempt=false;
             t_hor = t0_abs + p.Tmpc * (0:p.predHorizon-1);
 
             iter_time(ii) = t0_abs;
@@ -286,8 +293,11 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
             end
 
             if physical
+                energyAttempt=true;
+                demand=struct();
                 demand=robotenergy.loadStep(XtQp,Xt,Ut,p,dt_sim,t0_abs,fsmInternalState,kneeTpl,Tmc,cfg.ENERGY);
-                [Sim.energy,Sim.battery,y]=robotenergy.sample(Sim.energy,demand,dt_sim,cfg.ENERGY,Sim.battery);
+                [energy,battery,y]=robotenergy.sample(Sim.energy,demand,dt_sim,cfg.ENERGY,Sim.battery);
+                Sim.energy=energy; Sim.battery=battery; energyAttempt=false;
                 logRows(ii,:)=[t0_abs+dt_sim y.packA y.cellA y.packV y.cellV y.watts y.socPct];
                 Sim.current_time(end+1,1)=t0_abs;
                 Sim.current_total(end+1,1)=y.packA;
@@ -315,6 +325,14 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     catch ME
         feasible = false;
         fail_reason = ME.identifier;
+        if physical && energyAttempt
+            reason=robotenergy.failureReason(ME.identifier);
+            if ~isempty(reason)
+                fail_reason=reason;
+            else
+                unexpectedEnergyException=ME;
+            end
+        end
         if exist('ii', 'var')
             fail_iter = ii;
         end
@@ -341,6 +359,14 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
                 lastSuccessfulFsmInternalState, lastSuccessfulQp, ...
                 diagnosticContext);
             failureQP.exception = ME;
+        end
+        if physical && energyAttempt
+            failureQP.energy_exception=struct('identifier',ME.identifier,'message',ME.message, ...
+                'terminal_reason',robotenergy.failureReason(ME.identifier), ...
+                'attempted_time_s',t0_abs+dt_sim,'attempted_Xt',Xt,'attempted_Ut',Ut, ...
+                'attempted_fsm',fsmInternalState,'load',demand,'energy_interval_committed',false);
+            Sim=acceptedSim; Xt=acceptedXt; Ut=acceptedUt; fsmInternalState=acceptedFsm;
+            Sim.energy_failure=failureQP.energy_exception;
         end
     end
 
@@ -393,6 +419,9 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
         Sim.Ut = Ut;
         Sim.fsmInternalState = fsmInternalState;
         save(snap_path, 'Sim');
+        if ~isempty(unexpectedEnergyException)
+            rethrow(unexpectedEnergyException)
+        end
     
         out.tracking_error_total = NaN;
         out.control_effort_total = NaN;

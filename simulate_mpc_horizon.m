@@ -64,6 +64,11 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
 
     for iteration = 1:numberSteps
         time = stepTimes(iteration);
+        if physical
+            % A requested ODE step is not committed until its energy demand
+            % can be evaluated. Retain the exact last accepted state.
+            acceptedBefore = state;
+        end
         if ~isempty(writer)
             exactBefore = compact_exact_mpc_state(state);
         end
@@ -200,9 +205,43 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         end
 
         if physical
-            load=robotenergy.loadStep(XtQp,state.Xt,state.Ut,p,dt,time,state.fsm_internal_state, ...
-                state.knee_template,state.knee_parameters.Tmc,cfg.ENERGY);
-            [state.energy,state.battery,sample]=robotenergy.sample(state.energy,load,dt,cfg.ENERGY,state.battery);
+            load = struct();
+            try
+                load=robotenergy.loadStep(XtQp,state.Xt,state.Ut,p,dt,time,state.fsm_internal_state, ...
+                    state.knee_template,state.knee_parameters.Tmc,cfg.ENERGY);
+                [energy,battery,sample]=robotenergy.sample(state.energy,load,dt,cfg.ENERGY,state.battery);
+            catch exception
+                reason = robotenergy.failureReason(exception.identifier);
+                solver.energy_exception = struct('identifier',exception.identifier, ...
+                    'message',exception.message,'terminal_reason',reason, ...
+                    'ode_integrated',true,'attempted_state',compact_exact_mpc_state(state), ...
+                    'load',load,'energy_interval_committed',false);
+                state = acceptedBefore;
+                failureSolver = solver;
+                failureProblem = problem;
+                failureProblem.Xt = XtQp;
+                failureProblem.Ut = UtQp;
+                failureProblem.Xd = Xd;
+                failureProblem.Ud = Ud;
+                failureProblem.FSM = FSM;
+                failureProblem.fsm_internal_state = solver.energy_exception.attempted_state.fsm_internal_state;
+                failureProblem.time_s = time;
+                if ~isempty(writer)
+                    localCapture(writer, exactBefore, state, time, iteration, ...
+                        XtQp, UtQp, Xd, Ud, FSM, solver, problem, ...
+                        control, NaN, false, false);
+                end
+                if isempty(reason)
+                    if ~isempty(writer)
+                        writer.endSegment(state,struct('terminal_reason','energy_exception', ...
+                            'exception',solver.energy_exception));
+                    end
+                    rethrow(exception)
+                end
+                terminalReason = string(reason);
+                break
+            end
+            state.energy=energy; state.battery=battery;
             kneeCurrent=sample.packA; % dataset current_sample_A is the actual pack current
         end
         if options.update_battery && isfinite(kneeCurrent)
@@ -317,7 +356,8 @@ function localCapture(writer, before, state, time, iteration, ...
         XtQp, UtQp, Xd, Ud, FSM, solver, problem, control, current, integrated, committed)
     healthBefore = exact_mpc_health(XtQp,UtQp,Xd);
     healthAfter = exact_mpc_health(state.Xt,state.Ut,Xd);
-    dynamicEvent = ~healthAfter.valid || isfield(solver,'integration_exception');
+    dynamicEvent = ~healthAfter.valid || isfield(solver,'integration_exception') || ...
+        isfield(solver,'energy_exception');
     if healthAfter.valid
         % Provisional audit triggers, not calibrated safety/termination labels.
         dynamicEvent = dynamicEvent || healthAfter.components.orientation_error_rad > 1 || ...

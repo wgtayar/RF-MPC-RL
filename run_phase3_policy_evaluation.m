@@ -1,21 +1,36 @@
 function report = run_phase3_policy_evaluation(policyId, outputRoot, options)
 %run_phase3_policy_evaluation Evaluate a frozen policy with complete MPC capture.
-% Defaults to a full current-config mission, legacy reference and default QP
-% solver. max_decisions limits a probe without changing the mission definition.
+% Saved worker bundles retain historical defaults. A fresh checkout uses the
+% explicit fixed-pack setup with continuous references, tight primal rescue
+% and MPC-step target stopping. Caller-supplied modes always take precedence.
+% max_decisions limits a probe without changing the mission definition.
     if nargin < 3
         options = struct();
     end
-    options = localOptions(options);
     source = bootstrap_RF_MPC_RL();
-    bundle = load(fullfile(source,'rlEnv_MPC_R.mat'),'cfg','initial_R','lower_abs','upper_abs');
-    bundle.cfg.RNG_SEED = options.seed;
-    bundle.cfg.POLICY_EVALUATION = struct('policy_id',char(policyId),'options',options, ...
-        'scenario','current_config_not_claimed_historical_reproduction');
     previousRng = rng;
     rngCleanup = onCleanup(@() rng(previousRng));
+    savedPath = fullfile(source,'rlEnv_MPC_R.mat');
+    savedBundle = isfile(savedPath);
+    if savedBundle
+        bundle = load(savedPath,'cfg','initial_R','lower_abs','upper_abs');
+        configurationOrigin = 'saved_worker_bundle';
+    else
+        bundle = setup_RL_MPC();
+        configurationOrigin = 'fresh_setup';
+    end
+    options = localOptions(options,~savedBundle && isfield(bundle.cfg,'ENERGY'));
+    bundle.cfg.RNG_SEED = options.seed;
+    bundle.cfg.POLICY_EVALUATION = struct('policy_id',char(policyId),'options',options, ...
+        'scenario','current_config_not_claimed_historical_reproduction', ...
+        'configuration_origin',configurationOrigin,'training',false, ...
+        'learning_rates_used',[],'exploration_noise_used',[]);
     rng(options.seed,'twister');
     policy = load_phase3_policy(policyId);
     environmentOptions = struct('reference_mode',options.reference_mode,'solver_strategy',options.solver_strategy);
+    if isfield(options,'mission_end_mode')
+        environmentOptions.mission_end_mode = options.mission_end_mode;
+    end
     if isfield(options,'initial_condition')
         environmentOptions.initial_condition = options.initial_condition;
     end
@@ -28,7 +43,9 @@ function report = run_phase3_policy_evaluation(policyId, outputRoot, options)
     [~,runId] = fileparts(outputRoot);
     metadata = struct('run_id',runId,'run_type','deterministic_policy_evaluation', ...
         'monitor_root',fullfile(fileparts(source),'RL-MPC-Monitor'), ...
-        'seed',options.seed,'source_policy',policy.id,'policy',rmfield(policy,'actor'));
+        'seed',options.seed,'source_policy',policy.id,'policy',rmfield(policy,'actor'), ...
+        'configuration_origin',configurationOrigin,'training',false, ...
+        'learning_rates_used',[],'exploration_noise_used',[]);
     env = Phase3MpcEnvironment(bundle,outputRoot,metadata,environmentOptions);
     try
         report = localEvaluate(env,policy,bundle,options,runId);
@@ -69,6 +86,7 @@ function report = localEvaluate(env,policy,bundle,options,runId)
     end
     report = struct('source_sha',env.Writer.Manifest.source_sha,'source_dirty',env.Writer.Manifest.source_dirty, ...
         'run_id',runId,'policy',rmfield(policy,'actor'),'options',options,'outcome',status, ...
+        'configuration_origin',bundle.cfg.POLICY_EVALUATION.configuration_origin, ...
         'mission_complete',strcmp(status,'mission_complete'), ...
         'rollout_wall_s',toc(timer),'metrics',phase3_episode_metrics(env.Writer.Root,env.Config,env.Episode));
     report.checkpoint_unchanged = true;
@@ -79,10 +97,16 @@ function report = localEvaluate(env,policy,bundle,options,runId)
     close(env,status);
 end
 
-function options = localOptions(options)
+function options = localOptions(options,freshFixedPack)
     defaults = struct('reference_mode','legacy_absolute_time','solver_strategy','default', ...
         'max_decisions',inf,'seed',20260903);
-    assert(all(ismember(fieldnames(options),[fieldnames(defaults);{'initial_condition';'observation_schema'}])), ...
+    if freshFixedPack
+        defaults.reference_mode = 'position_continuous_v1';
+        defaults.solver_strategy = 'default_one_shot_fallback_tight_primal_v1';
+        defaults.mission_end_mode = 'mpc_step_target_v1';
+    end
+    assert(all(ismember(fieldnames(options),[fieldnames(defaults); ...
+        {'initial_condition';'observation_schema';'mission_end_mode'}])), ...
         'run_phase3_policy_evaluation:Options','Unknown evaluation option.');
     if isfield(options,'initial_condition')
         options.initial_condition = validate_phase3_initial_condition(options.initial_condition);

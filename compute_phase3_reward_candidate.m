@@ -30,7 +30,9 @@ function [reward,info] = compute_phase3_reward_candidate(window,execution,exposu
         health.([names{k} '_finite_coverage_s']) = exposure.finite_coverage_s(k);
     end
     actualTerminal=window.terminal_reason;
-    if strcmp(actualTerminal,'actuator_limit'), window.terminal_reason='dynamic_safety_violation'; end
+    if ismember(string(actualTerminal),["actuator_limit","battery_power_limit","leg_reach_limit","battery_depleted"])
+        window.terminal_reason='dynamic_safety_violation';
+    end
     components = phase3reward.components(window,execution,health,scales);
     [reward,info] = phase3reward.scoreCoverage(components,exposure,policy);
     info.actual_terminal_reason=actualTerminal; window.terminal_reason=actualTerminal;

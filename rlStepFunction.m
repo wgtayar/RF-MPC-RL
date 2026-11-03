@@ -89,6 +89,9 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
         chunk_abs = (decision_idx - 1) * cfg.APPLY_EVERY + k;
         mission_time = chunk_abs * cfg.CHUNK_DURATION;
+        if isfield(cfg,'ENERGY')
+            mission_time = logged.episode_time_total+sum(T_all);
+        end
 
         if T_all(k) > 0
             Ieq_chunk = Q_all(k) / T_all(k);
@@ -234,6 +237,9 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
     distance_next = max(0, logged.distance_m + window_distance);
 
     time_frac_next = min(decision_idx / cfg.EP_STEPS, 1);
+    if isfield(cfg,'ENERGY')
+        time_frac_next = min((logged.episode_time_total+T_window)/cfg.MISSION_DURATION,1);
+    end
     progress_next = min(distance_next / cfg.MISSION.D_TARGET_M, 1);
     lag_frac_next = max(0, time_frac_next - progress_next);
 
@@ -287,7 +293,9 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
     if ~feasible
         window.terminal_reason = 'infeasible';
-        if strcmp(fail_reason,'actuator_limit'), window.terminal_reason=fail_reason; end
+        if ismember(string(fail_reason),["actuator_limit","battery_power_limit","leg_reach_limit","battery_depleted"])
+            window.terminal_reason=fail_reason;
+        end
     elseif window.completed_episode
         window.terminal_reason = 'mission_complete';
     elseif battery.margin_norm <= cfg.BATTERY.terminal_margin

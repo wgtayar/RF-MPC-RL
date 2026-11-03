@@ -40,9 +40,14 @@ function a = accumulateChunk(a,row,snapshot,cfg)
         assert(a.reason~="horizon_complete" && strlength(a.reason)>0, ...
             'phase3window:Solver','A failed solver needs its captured failure classification.');
     elseif ~row.integrated
+        if isfield(row.solver,'energy_exception')
+            a.reason = string(robotenergy.failureReason(row.solver.energy_exception.identifier));
+            if strlength(a.reason)==0, a.reason="energy_exception"; end
+        else
         assert(isfield(row.solver,'integration_exception'), ...
             'phase3window:Integration','Successful unintegrated attempt needs an explicit integration exception.');
         a.reason = "integration_exception";
+        end
     elseif ~isreal([row.state_after.Xt(:);row.state_after.Ut(:);row.Xd(:)]) || ...
             any(~isfinite([row.state_after.Xt(:);row.state_after.Ut(:);row.Xd(:)]))
         a.reason = "invalid_state";

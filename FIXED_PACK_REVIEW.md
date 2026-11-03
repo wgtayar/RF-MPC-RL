@@ -1,5 +1,12 @@
 # Fixed-pack model for supervisory review
 
+The subsequent [mathematical audit and readiness repair](FIXED_PACK_MATH.md)
+versions the streaming EKF, preserves failed energy transitions and qualifies
+target-crossing reports. It also makes explicit that endpoint-derived joint
+speed is an interval average, so the voltage screen is not a peak-demand bound.
+Use `run_fixed_pack_readiness` for the new fully captured qualification record;
+the original review suite/results remain a historical baseline.
+
 The 5.5 kg RF-MPC plant supplies its actual body pose, foot positions, geometry and solved ground forces. The motor/transmission are a separate Mini Cheetah design choice. The battery is the manuscript's experimentally characterized cell, replicated in a **single fixed 4S6P pack across all episodes** (2 Ah/cell, 12 Ah pack). The 5.5 kg is a stipulated total simulated mass, not a weighed assembly. No new mass, inertia, contact constraints or QP weights were fitted to get a better result. The 12 V legacy sizing target does not set terminal voltage. Existing saved runs without ENERGY still reconstruct the historical proxy.
 
 ## What changes and why

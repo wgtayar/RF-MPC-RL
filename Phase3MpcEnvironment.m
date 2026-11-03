@@ -91,7 +91,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             end
             if isfield(cfg,'ENERGY')
                 metadata.energy_model=cfg.ENERGY.version;
-                metadata.battery_feedback_version='fixed_pack_streaming_3rc_ekf_v1';
+                metadata.battery_feedback_version=robotenergy.estimatorVersion(cfg.BATTERY);
                 cfg.PHASE3.battery_feedback_version=metadata.battery_feedback_version;
             end
             metadata.seed = cfg.RNG_SEED;
