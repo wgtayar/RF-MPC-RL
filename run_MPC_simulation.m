@@ -110,6 +110,11 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
         p.reference_position_offset_m=offset;
         logRows=nan(max_iter,7);
     end
+    resolved=physical && robotenergy.usesResolved(cfg.ENERGY);
+    if resolved
+        assert(cfg.ENERGY.minimum_soc==cfg.BATTERY.terminal_margin, ...
+            'robotenergy:IntegrationReserve','Drive reserve must equal the configured battery mission reserve.');
+    end
     qp_options = optimoptions('quadprog', 'Display', 'off');
 
     tracking_error = zeros(max_iter, 1);
@@ -269,8 +274,14 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
             p.p_ext = p_ext;
             u_ext = 0 * u_ext;
 
-            [~, X_chunk] = ode45(@(t, X) dynamics_SRB(t, X, Ut, Xd, u_ext, p), [t0_abs, t0_abs + dt_sim], Xt);
-            Xt = X_chunk(end,:).';
+            derivative=@(t,X)dynamics_SRB(t,X,Ut,Xd,u_ext,p);
+            if resolved
+                solution=ode45(derivative,[t0_abs,t0_abs+dt_sim],Xt);
+                Xt=solution.y(:,end);
+            else
+                [~,X_chunk]=ode45(derivative,[t0_abs,t0_abs+dt_sim],Xt);
+                Xt=X_chunk(end,:).';
+            end
 
             if any(isnan(Xt)) || any(isinf(Xt))
                 feasible = false;
@@ -295,8 +306,13 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
             if physical
                 energyAttempt=true;
                 demand=struct();
-                demand=robotenergy.loadStep(XtQp,Xt,Ut,p,dt_sim,t0_abs,fsmInternalState,kneeTpl,Tmc,cfg.ENERGY);
-                [energy,battery,y]=robotenergy.sample(Sim.energy,demand,dt_sim,cfg.ENERGY,Sim.battery);
+                if resolved
+                    demand=robotenergy.loadResolved(solution,derivative,Ut,p,fsmInternalState,kneeTpl,Tmc,cfg.ENERGY);
+                    [energy,battery,y]=robotenergy.sampleResolved(Sim.energy,demand,cfg.ENERGY,Sim.battery);
+                else
+                    demand=robotenergy.loadStep(XtQp,Xt,Ut,p,dt_sim,t0_abs,fsmInternalState,kneeTpl,Tmc,cfg.ENERGY);
+                    [energy,battery,y]=robotenergy.sample(Sim.energy,demand,dt_sim,cfg.ENERGY,Sim.battery);
+                end
                 Sim.energy=energy; Sim.battery=battery; energyAttempt=false;
                 logRows(ii,:)=[t0_abs+dt_sim y.packA y.cellA y.packV y.cellV y.watts y.socPct];
                 Sim.current_time(end+1,1)=t0_abs;
@@ -479,6 +495,9 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
         battery=Sim.battery;
         battery.bms_input=array2table(logRows,'VariableNames', ...
             {'Time','PackCurrent','CellCurrent','PackVoltage','CellVoltage','PowerW','SOC'});
+        if resolved
+            battery.bms_input_semantics='Current and power are interval means; voltage and SOC are endpoint values. Mean P need not equal endpoint V times mean I.';
+        end
     else
     valid = isfinite(knee_t) & isfinite(knee_I4);
     t_chunk = knee_t(valid);

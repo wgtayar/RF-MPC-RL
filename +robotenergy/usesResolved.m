@@ -1,0 +1,13 @@
+function enabled=usesResolved(e)
+%USESRESOLVED Explicit opt-in; unversioned historical configurations stay v1.
+enabled=isfield(e,'integration_method');
+if enabled
+    assert(strcmp(e.integration_method,'dense_midpoint_v1'), ...
+        'robotenergy:IntegrationMethod','Unknown drive integration method.');
+    validateattributes(e.integration_substeps,{'numeric'}, ...
+        {'scalar','finite','integer','positive'});
+    assert(mod(e.integration_substeps,2)==0 && ...
+        e.comparison_substeps==e.integration_substeps/2, ...
+        'robotenergy:IntegrationGrid','Require an even midpoint grid and its half-size comparison.');
+end
+end

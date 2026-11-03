@@ -1,5 +1,7 @@
 # Fixed-pack model for supervisory review
 
+Current default: the [frozen simulation pack](FROZEN_PACK.md) and [resolved runtime](RESOLVED_ENERGY_METHOD.md). The original 4S6P/interval-mean derivation below is retained for historical interpretation.
+
 The subsequent [mathematical audit and readiness repair](FIXED_PACK_MATH.md)
 versions the streaming EKF, preserves failed energy transitions and qualifies
 target-crossing reports. It also makes explicit that endpoint-derived joint

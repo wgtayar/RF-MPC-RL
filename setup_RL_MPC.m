@@ -62,12 +62,17 @@ function bundle = setup_RL_MPC()
     cfg.EFFORT_REF = 5.4e4;
     cfg.IEQ_REF = 90;
 
-    % Working manuscript profile: empirical table, explicit assumptions and
-    % replaceable cell/pack/EKF settings. Saved legacy configs are unchanged.
-    cfg.BATTERY = phase3battery.manuscriptConfig();
+    % One frozen simulation pack; source-controlled sizing evidence and cell table.
+    % Saved historical configurations keep their original pack and provider.
+    cfg.BATTERY = phase3battery.fixedPackConfig();
 
     cfg.BATTERY.energy_provider='fixed_pack_joint_v1';
     cfg.ENERGY = robotenergy.config();
+    cfg.ENERGY.version = 'fixed_pack_joint_dense_v2';
+    cfg.ENERGY.integration_method = 'dense_midpoint_v1';
+    cfg.ENERGY.integration_substeps = 32;
+    cfg.ENERGY.comparison_substeps = 16;
+    cfg.ENERGY.minimum_soc = cfg.BATTERY.terminal_margin;
     cfg.PROXY.betaMc = 0.5;
     cfg.PROXY.kneeCsv = fullfile(rootDir, 'Symmetric Knee Torques.csv');
     cfg.PROXY.alpha = 1;
@@ -84,6 +89,7 @@ function bundle = setup_RL_MPC()
     cfg.OBS.STATE_NORM_MAX = 150.0;
     cfg.OBS.NOMINAL_TST = p.Tst;
 
+    cfg.EXPERIMENT.fixed_pack_id = cfg.BATTERY.fixed_pack_spec.id;
     cfg.EXPERIMENT.id = 'scratch_320m_gv045_DR0005_oldPace_noStateRisk_v1';
     cfg.EXPERIMENT.description = ...
         'Stability recovery: 320m, gamma_v_max=0.45, DR_MAX=0.0005, old progress-first pace reward, no state-norm risk, adaptive shaping disabled.';

@@ -1,7 +1,5 @@
 function [s,y] = advance(s,P,dt)
 % Constant terminal watts during one interval, with one estimator update.
-[s,y]=robotenergy.advancePlant(s,P,dt);
-i=y.cellA; v=y.cellV; I=y.packA; V=y.packV;
 % Newly initialized states use exact derivatives of this discrete cell model.
 % Unversioned captured states retain the original approximate estimator so
 % replaying historical evidence does not silently change its state transition.
@@ -9,6 +7,10 @@ version='fixed_pack_streaming_3rc_ekf_v1';
 if isfield(s,'estimatorVersion')
     version=robotenergy.estimatorVersion(struct('streaming_estimator_version',s.estimatorVersion));
 end
+assert(~strcmp(version,'fixed_pack_resolved_ekf_v3'), ...
+    'robotenergy:EstimatorVersion','Resolved estimator requires sampleResolved with its full current sequence.');
+[s,y]=robotenergy.advancePlant(s,P,dt);
+i=y.cellA; v=y.cellV; I=y.packA; V=y.packV;
 if strcmp(version,'fixed_pack_exact_jacobian_ekf_v2')
     [z,predictedV,F,H]=robotenergy.linearizeEstimator(s,s.estimate,i,dt);
 else

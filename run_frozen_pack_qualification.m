@@ -1,0 +1,89 @@
+function report=run_frozen_pack_qualification(root)
+%RUN_FROZEN_PACK_QUALIFICATION Bounded native RL tests of the frozen design.
+% Full-mission electrical evidence is the separate, pinned sizing replay.
+src=bootstrap_RF_MPC_RL(); sha=gitValue(src,'rev-parse HEAD');
+assert(isempty(gitValue(src,'status --porcelain')),'frozenQualification:Dirty','Commit before qualification.');
+assert(~isfolder(root) && ~isfile(root),'frozenQualification:Exists','Use a new output directory.');
+assert(~isfile(fullfile(src,'rlEnv_MPC_R.mat')),'frozenQualification:SavedBundle','Require fresh setup.');
+mkdir(root); b=setup_RL_MPC(); save(fullfile(root,'configuration.mat'),'b','-v7.3');
+meta=struct('schema','frozen_pack_native_qualification_v1','source_sha',sha,'source_dirty',false, ...
+ 'source_branch',gitValue(src,'branch --show-current'),'matlab',version, ...
+ 'timestamp_utc',char(datetime('now','TimeZone','UTC','Format','yyyy-MM-dd''T''HH:mm:ssXXX')), ...
+ 'configuration_sha256',sha256_file(fullfile(root,'configuration.mat')), ...
+ 'seed',b.cfg.RNG_SEED,'reward_version','reward_phase3_legacy_bridge_v1', ...
+ 'pack_specification',b.cfg.BATTERY.fixed_pack_spec,'training',false, ...
+ 'learning_rates_used',[],'exploration_noise_used',[],'episodes_trained',0);
+writeJson(root,'manifest',meta);
+try
+ names={'testFixedPackEnergy','testFixedPackMath','testFixedPackFailureHandling', ...
+  'testFixedPackTargetCrossing','testBatteryManuscriptConfig','testPhase3BatteryFeedback', ...
+  'testMpcReplayTimeGrid','testReferencePositionContinuity','testPhase3TargetStop', ...
+  'testPhase3TerminalSemantics','testFixedPackPolicyEvaluation','testFixedPackLegacyTiming', ...
+  'testInstantaneousDrive','testPackSizingAnalysis','testSizingDemandTrace', ...
+  'testPackSizingBound','testResolvedEnergy','testFrozenPack'};
+ files=cellfun(@(n)fullfile(src,'tests',[n '.m']),names,'UniformOutput',false);
+ results=runtests(files);
+ writetable(table(string({results.Name})',[results.Passed]',[results.Failed]',[results.Incomplete]', ...
+  'VariableNames',{'name','passed','failed','incomplete'}),fullfile(root,'tests.csv'));
+ assertSuccess(results);
+ v=run_phase3_environment_validation(fullfile(root,'interface'),true);
+ writeJson(root,'interface',struct('rows',v.qp_steps,'reset_equal',v.reset_equal, ...
+  'dataset_verified',v.validation.valid,'toolbox_validation',v.toolbox_validation_executed));
+ cases=cell(2,1);
+ for k=1:2
+  c=b; c.cfg.BATTERY.SOC_init=[.25,.95]; c.cfg.BATTERY.SOC_init=c.cfg.BATTERY.SOC_init(k);
+  c.cfg.BATTERY.metric_init=100*c.cfg.BATTERY.SOC_init;
+  cases{k}=shortCase(fullfile(root,sprintf('short_soc%02d',round(100*c.cfg.BATTERY.SOC_init))),c);
+ end
+ report=struct('schema',meta.schema,'source_sha',sha,'source_dirty',false, ...
+  'tests_passed',nnz([results.Passed]),'tests_failed',nnz([results.Failed]), ...
+  'tests_incomplete',nnz([results.Incomplete]),'interface_passed',true,'cases',{cases}, ...
+  'controlled_RL_interface_test_ready',true,'new_full_mission_rollout',false, ...
+  'full_mission_evidence','Separate frozen-pack offline electrical replay of complete requested governed-fast trace.', ...
+  'training_promoted',false,'physical_hardware_qualified',false, ...
+  'remaining_gates','Observation/reward/value and adverse-domain qualification before training promotion.');
+ assert(strcmp(sha,gitValue(src,'rev-parse HEAD')) && isempty(gitValue(src,'status --porcelain')), ...
+  'frozenQualification:SourceChanged','Source changed during qualification.');
+ writeJson(root,'qualification',report);
+catch exception
+ writeJson(root,'failure',struct('source_sha',sha,'identifier',exception.identifier, ...
+  'message',exception.message,'stack',{exception.stack}));
+ rethrow(exception)
+end
+end
+function r=shortCase(root,b)
+b.cfg.MISSION.D_TARGET_M=3; b.cfg.MISSION_DURATION=10; b.cfg.EP_STEPS=1;
+b.cfg.MISSION.WINDOW_TARGET_M=3;
+src=bootstrap_RF_MPC_RL(); [~,id]=fileparts(root);
+meta=struct('run_id',id,'run_type','frozen_pack_short_native_qualification', ...
+ 'monitor_root',fullfile(fileparts(src),'RL-MPC-Monitor'),'seed',b.cfg.RNG_SEED, ...
+ 'source_policy','0.50mps_slow_governed','training',false,'learning_rates_used',[],'exploration_noise_used',[]);
+options=struct('reference_mode','position_continuous_v1', ...
+ 'solver_strategy','default_one_shot_fallback_tight_primal_v1','mission_end_mode','mpc_step_target_v1');
+env=Phase3MpcEnvironment(b,root,meta,options);
+try
+ reset(env); gamma=(.5-b.cfg.V_MIN)/(b.cfg.V_MAX-b.cfg.V_MIN);
+ while ~env.Done
+  [o,reward,~,info]=step(env,[zeros(3,1);gamma;b.cfg.GAMMA_A_MIN]);
+  assert(all(isfinite(o)) && isfinite(reward),'frozenQualification:RL','Nonfinite RL transition.');
+ end
+ r=struct('initial_soc',b.cfg.BATTERY.SOC_init,'terminal',info.terminal_reason, ...
+  'time_s',env.State.t,'distance_m',info.window.distance_end_m,'battery',env.State.battery, ...
+  'true_soc',env.State.energy.soc,'pack_id',env.State.energy.packId,'rows',env.Writer.RowCount, ...
+  'metrics',phase3_episode_metrics(root,env.Config,env.Episode));
+ assert(strcmp(info.terminal_reason,'mission_complete'),'frozenQualification:Mission','Short native mission failed.');
+ close(env,'frozen_pack_qualification_complete');
+ r.dataset_validated=validate_exact_state_dataset(root,true).valid;
+ writeJson(root,'result',r);
+catch exception
+ if ~env.Writer.Closed,close(env,'frozen_pack_qualification_exception');end
+ rethrow(exception)
+end
+end
+function v=gitValue(root,args)
+[status,v]=system(sprintf('git -C "%s" %s',root,args));assert(status==0);v=strtrim(v);
+end
+function writeJson(root,name,v)
+f=fopen(fullfile(root,[name '.json']),'w');assert(f>=0);cleanup=onCleanup(@()fclose(f));
+fprintf(f,'%s\n',jsonencode(v,'PrettyPrint',true));
+end

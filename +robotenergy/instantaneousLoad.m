@@ -1,6 +1,6 @@
 function m = instantaneousLoad(x,xdot,U,p,time,fsm,tpl,Tmc,e)
-%INSTANTANEOUSLOAD Diagnostic demand from the actual SRB state derivative.
-% This does not replace the historical interval-average production provider.
+%INSTANTANEOUSLOAD Drive demand from the actual SRB state derivative.
+% Used by the explicitly versioned dense-time production provider and audits.
 % Supply xdot from dynamics_SRB with the same held force/reference/FSM used
 % inside the ODE interval. A sample is not a bound on the continuous-time peak.
 validateattributes(x,{'numeric'},{'real','finite','vector','numel',30});
@@ -16,11 +16,14 @@ for j=1:4
     ax=[1;0;0]; ay=[0;cos(q(1));sin(q(1))];
     offset=p.sign_d*p.d*[0;cos(q(1));sin(q(1))];
     relative=feet(:,j)-x(1:3);
-    hip=rot'*relative-[p.sign_L*p.L/2;p.sign_d*p.W/2;0];
+    hipOffset=[p.sign_L*p.L/2;p.sign_d*p.W/2;0];
+    % Match fcn_invKin3 exactly, even after small numerical R'R drift.
+    relativeHip=relative-rot*hipOffset;
+    hip=rot'*relativeHip;
     link=p.l1*[cos(q(2));sin(q(1))*sin(q(2));-cos(q(1))*sin(q(2))];
     J=[cross(ax,hip),cross(ay,hip-offset),cross(ay,hip-offset-link)];
     % Differentiate exactly the body-frame vector used by fcn_invKin3.
-    hipDot=rotDot'*relative+rot'*(feetDot(:,j)-xdot(1:3));
+    hipDot=rotDot'*relativeHip+rot'*(feetDot(:,j)-xdot(1:3)-rotDot*hipOffset);
     reciprocalCondition(j)=rcond(J);
     assert(reciprocalCondition(j)>0,'robotenergy:LegReach','Singular leg Jacobian.');
     speed(:,j)=J\hipDot;

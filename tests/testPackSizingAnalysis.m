@@ -12,7 +12,8 @@ classdef testPackSizingAnalysis < matlab.unittest.TestCase
             fixture=tc.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
             inputRoot=fullfile(fixture.Folder,'input'); mkdir(inputRoot);
             outputRoot=fullfile(fixture.Folder,'output');
-            b=setup_RL_MPC(); save(fullfile(inputRoot,'configuration.mat'),'b');
+            b=setup_RL_MPC(); b.cfg.BATTERY=phase3battery.manuscriptConfig();
+            save(fullfile(inputRoot,'configuration.mat'),'b');
             drive=zeros(3,53); drive(:,1)=[0;.01;.03]; drive(:,2)=[.01;.03;.06];
             drive(:,3)=[12;24;36]; drive(:,4)=1; drive(:,5)=.1;
             save(fullfile(inputRoot,'demand.mat'),'drive');
@@ -35,7 +36,8 @@ classdef testPackSizingAnalysis < matlab.unittest.TestCase
             bootstrap_RF_MPC_RL();
             fixture=tc.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
             inputRoot=fullfile(fixture.Folder,'input'); mkdir(inputRoot);
-            b=setup_RL_MPC(); save(fullfile(inputRoot,'configuration.mat'),'b');
+            b=setup_RL_MPC(); b.cfg.BATTERY=phase3battery.manuscriptConfig();
+            save(fullfile(inputRoot,'configuration.mat'),'b');
             drive=zeros(1,53); drive(2)=.01; drive(3)=12; drive(4)=100; drive(5)=.1;
             save(fullfile(inputRoot,'demand.mat'),'drive');
             report=run_pack_sizing_analysis(inputRoot,fullfile(fixture.Folder,'output'));

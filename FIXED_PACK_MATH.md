@@ -1,5 +1,7 @@
 # Fixed-pack mathematical audit and RL qualification
 
+Current default: the [frozen simulation pack](FROZEN_PACK.md) and [resolved runtime](RESOLVED_ENERGY_METHOD.md). The original 4S6P/interval-mean derivation below is retained for historical interpretation.
+
 This note describes the implemented simulated model, not a calibrated robot. The
 parameter sources and unresolved component assumptions in FIXED_PACK_REVIEW.md
 still apply. No motor, pack, mass, gait, controller limit or reward weight was

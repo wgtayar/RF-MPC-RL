@@ -1,5 +1,11 @@
 function s = start(b)
 assert(~b.use_pack_sizing,'robotenergy:FixedPack','Size the pack before the experiment.');
+if isfield(b,'fixed_pack_spec')
+    frozen=b.fixed_pack_spec;
+    assert(b.n_series==frozen.n_series && b.n_parallel==frozen.n_parallel && ...
+        b.C_nom_Ah==frozen.cell_capacity_Ah,'robotenergy:PackChanged', ...
+        'Frozen pack size/capacity changed; use the recorded specification across all episodes.');
+end
 for k = {'n_series','n_parallel'}
     validateattributes(b.(k{1}),{'numeric'},{'scalar','integer','positive','finite'});
 end
@@ -18,4 +24,5 @@ s.slope=gradient(t.OCV)./gradient(t.SOC);
 s.ocvDerivative=mkpp(breaks,coefs(:,1:end-1).*(order-1:-1:1));
 s.estimatorVersion=robotenergy.estimatorVersion(b);
 s.voltageLimitSteps=0; s.torqueLimitSteps=0;
+if isfield(b,'fixed_pack_spec'), s.packId=b.fixed_pack_spec.id; end
 end

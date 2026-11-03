@@ -1,0 +1,23 @@
+{
+  "schema": "frozen_simulation_pack_v1",
+  "id": "beyond_torque_20s1p_p95_20261103_v1",
+  "n_series": 20,
+  "n_parallel": 1,
+  "cell_capacity_Ah": 2,
+  "pack_capacity_Ah": 2,
+  "reported_nominal_voltage_V": 74.0,
+  "required_full_charge_bus_capability_V": 83.632,
+  "cell_model_sha256": "18ec7700b630f1d355b22eebabfc4ff45779efdd25382b5d244ca8d66f1ee975",
+  "selection_source_sha": "116afc63955e346149d85782de3a658083b43af8",
+  "selection_report_sha256": "a8786cbfd1c317ea0bec2e391d5661a8234fc0704fb9cfa3dc5f72363cba2cd7",
+  "resolved_input_source_sha": "0291fb84c3f86b6bbf123f003eee2ce073273956",
+  "resolved_input_sha256": "84130851c0eff21097b1bcb342d74d0025e69c28ce079219f7967ee6c3011a23",
+  "selection_record": "RL-MPC-Monitor/runs/pack-sizing-20261103-a/selection.json",
+  "sizing_criterion": "Minimum parallel count at conservative fixed series count, time-weighted P95 cell current <= 1 A in both 25% and 95% initial-SOC replays; all sampled voltage/torque/root/SOC checks pass.",
+  "characterization_current_A": 1,
+  "current_tail_policy": "Allowed, explicitly unvalidated extrapolation above characterization amplitude; not a hardware current rating.",
+  "mission_soc_floor": 0.2,
+  "simulation_only": true,
+  "physical_hardware_qualified": false,
+  "runtime_or_episode_sizing": false
+}

@@ -48,6 +48,11 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             'robotenergy:FixedPack','Start a fresh run when changing pack configuration.');
         chargeStart=state.energy.chargeAs;
     end
+    resolved=physical && robotenergy.usesResolved(cfg.ENERGY);
+    if resolved
+        assert(cfg.ENERGY.minimum_soc==cfg.BATTERY.terminal_margin, ...
+            'robotenergy:IntegrationReserve','Drive reserve must equal the configured battery mission reserve.');
+    end
     solveCount = 0;
     failedSolveCount = 0;
     trackingErrorSum = 0;
@@ -175,9 +180,13 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             disturbanceSamples(end+1,:) = [time,uExt(:).',pExt(:).']; %#ok<AGROW>
         end
         try
-            [~, stateHistory] = ode45( ...
-                @(t, X) dynamics_SRB(t, X, state.Ut, Xd, uExt, p), ...
-                [time, time + dt], state.Xt);
+            derivative = @(t, X) dynamics_SRB(t, X, state.Ut, Xd, uExt, p);
+            if resolved
+                solution = ode45(derivative,[time,time+dt],state.Xt);
+                stateHistory = solution.y.';
+            else
+                [~,stateHistory] = ode45(derivative,[time,time+dt],state.Xt);
+            end
         catch exception
             if ~isempty(writer)
                 solver.integration_exception = struct('identifier',exception.identifier, ...
@@ -211,9 +220,16 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         if physical
             load = struct();
             try
-                load=robotenergy.loadStep(XtQp,state.Xt,state.Ut,p,dt,time,state.fsm_internal_state, ...
-                    state.knee_template,state.knee_parameters.Tmc,cfg.ENERGY);
-                [energy,battery,sample]=robotenergy.sample(state.energy,load,dt,cfg.ENERGY,state.battery);
+                if resolved
+                    load=robotenergy.loadResolved(solution,derivative,state.Ut,p,state.fsm_internal_state, ...
+                        state.knee_template,state.knee_parameters.Tmc,cfg.ENERGY);
+                    [energy,battery,sample,load]=robotenergy.sampleResolved( ...
+                        state.energy,load,cfg.ENERGY,state.battery);
+                else
+                    load=robotenergy.loadStep(XtQp,state.Xt,state.Ut,p,dt,time,state.fsm_internal_state, ...
+                        state.knee_template,state.knee_parameters.Tmc,cfg.ENERGY);
+                    [energy,battery,sample]=robotenergy.sample(state.energy,load,dt,cfg.ENERGY,state.battery);
+                end
             catch exception
                 reason = robotenergy.failureReason(exception.identifier);
                 solver.energy_exception = struct('identifier',exception.identifier, ...
@@ -334,6 +350,11 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         out.drive_trace=driveRows(1:integratedSteps,:);
         out.drive_trace_columns={'time_before_s','time_after_s','watts','required_voltage_V', ...
             'peak_motor_torque_Nm','joint_torque_12','joint_speed_12','phase_current_12','motor_voltage_12'};
+        if resolved
+            out.drive_trace_semantics='watts: duration-weighted mean; required V and motor torque: sampled maxima; all per-joint arrays: one maximum-required-voltage sample';
+        else
+            out.drive_trace_semantics='watts and per-joint arrays: historical endpoint-displacement mean-speed provider';
+        end
         out.drive_inputs=driveInputs(1:integratedSteps,:);
         out.drive_input_columns={'Xt_qp_30','Xt_after_30','Ut_12','Xd_first_30','FSM_4','Ta_4','Tb_4'};
     end

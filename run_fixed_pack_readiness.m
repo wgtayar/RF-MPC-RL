@@ -104,13 +104,21 @@ end
 
 function summary = exportDriveTrace(root)
 index = readtable(fullfile(root,'mpc_steps','index.csv'),'TextType','string');
-values = zeros(12*sum(index.row_count),12); n = 0;
+values = zeros(12*sum(index.row_count),13); n = 0;
+speedConvention='signed joint displacement / MPC interval; not continuous-time peak speed';
+headroomConvention='pack voltage minus per-joint required voltage for the interval-mean provider';
 for f = 1:height(index)
     rows = read_exact_state_rows(fullfile(root,index.file(f)));
     for k = 1:numel(rows)
         row = rows{k};
         if ~row.current_sample_committed, continue; end
         b = row.state_after.battery;
+        checkedBus=b.pack_voltage_V;
+        if isfield(b,'drive_integration_method')
+            checkedBus=b.drive_min_pack_voltage_V;
+            speedConvention='instantaneous analytic IK derivative; all joints sampled at the interval sampled maximum required-voltage time';
+            headroomConvention='minimum sampled bus voltage minus per-joint voltage at the maximum-required-voltage sample; conservative noncoincident envelope';
+        end
         for leg = 1:4
             for axis = 1:3
                 n = n+1;
@@ -118,18 +126,18 @@ for f = 1:height(index)
                     b.drive_joint_speed_rad_s(axis,leg),b.drive_joint_torque_Nm(axis,leg), ...
                     b.drive_motor_speed_rad_s(axis,leg),b.drive_phase_current_A(axis,leg), ...
                     b.drive_motor_voltage_V(axis,leg),b.pack_voltage_V, ...
-                    b.pack_voltage_V-abs(b.drive_motor_voltage_V(axis,leg))];
+                    checkedBus-abs(b.drive_motor_voltage_V(axis,leg)),checkedBus];
             end
         end
     end
 end
 T = array2table(values(1:n,:),'VariableNames',{'row','time_before_s','time_after_s', ...
     'leg','axis','joint_speed_rad_s','joint_torque_Nm','motor_speed_rad_s','phase_current_A', ...
-    'motor_voltage_V','pack_voltage_V','voltage_headroom_V'});
+    'motor_voltage_V','pack_voltage_V','voltage_headroom_V','minimum_checked_bus_voltage_V'});
 writetable(T,fullfile(root,'drive_trace.csv'));
 summary = struct('file','drive_trace.csv','rows',n, ...
     'sha256',sha256_file(fullfile(root,'drive_trace.csv')), ...
-    'speed_convention','signed joint displacement / MPC interval; not continuous-time peak speed', ...
+    'speed_convention',speedConvention,'headroom_convention',headroomConvention, ...
     'minimum_voltage_headroom_V',min(T.voltage_headroom_V));
 end
 
