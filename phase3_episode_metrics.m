@@ -11,6 +11,8 @@ function metrics = phase3_episode_metrics(root, cfg, episode)
     values = nan(sum(index.row_count),numel(names));
     classifications = strings(size(values,1),1);
     samples = nan(size(values,1),2);
+    jointEnergy=isfield(cfg,'ENERGY');
+    ledger=nan(size(values,1),6);
     count = 0;
     sampleCount = 0;
     initial = struct();
@@ -41,6 +43,11 @@ function metrics = phase3_episode_metrics(root, cfg, episode)
                 sampleCount = sampleCount+1;
                 samples(sampleCount,:) = [row.current_sample_time,row.current_sample_A];
             end
+            if jointEnergy
+                a0=row.state_before.energy; a1=row.state_after.energy;
+                ledger(count,:)=[a0.chargeAs a1.chargeAs a0.energyWh a1.energyWh ...
+                    row.state_before.battery.soc_pct row.state_after.battery.soc_pct];
+            end
             lastSegment = row.segment;
         end
     end
@@ -54,6 +61,9 @@ function metrics = phase3_episode_metrics(root, cfg, episode)
     origin = initial.decision_bookkeeping.initial_position_x;
     steps = struct('integrated',logical(T.integrated),'time_before',T.time_before,'time_after',T.time_after, ...
         'distance_before',T.x_before-origin,'distance_after',T.x_after-origin);
+    if jointEnergy
+        current.ledger=ledger(1:count,:);
+    end
     crossing = phase3_target_crossing(steps,cfg.MISSION.D_TARGET_M,current,cfg.BATTERY);
     duration = finalState.t-initial.t;
     numerical = classifications == "numerical_solver_failure" | ...
@@ -61,6 +71,9 @@ function metrics = phase3_episode_metrics(root, cfg, episode)
         classifications == "numerical_solver_failure_unrecovered";
     charge = localCharge(current.time,current.total);
     scopeCharge = charge-localCharge(initial.current_time,initial.current_total);
+    if jointEnergy
+        charge=finalState.energy.chargeAs; scopeCharge=charge-initial.energy.chargeAs;
+    end
     currentEquivalent = NaN;
     if duration > 0
         currentEquivalent = scopeCharge/duration;
@@ -86,6 +99,11 @@ function metrics = phase3_episode_metrics(root, cfg, episode)
         'force_norm',localDistribution([T.Ut_before;T.Ut_after]), ...
         'current_A',localDistribution(abs(samples(1:sampleCount,2))), ...
         'time_outside_validated_envelope_s',NaN,'health_envelope_validated',false);
+    if jointEnergy
+        metrics.energy_Wh=finalState.energy.energyWh-initial.energy.energyWh;
+        metrics.voltage_limit_steps=finalState.energy.voltageLimitSteps-initial.energy.voltageLimitSteps;
+        metrics.torque_limit_steps=finalState.energy.torqueLimitSteps-initial.energy.torqueLimitSteps;
+    end
     late = samples(1:sampleCount,1) >= initial.t+0.8*duration;
     metrics.late_current_window_start_s = initial.t+0.8*duration;
     metrics.late_current_A = localDistribution(abs(samples(late,2)));

@@ -4,6 +4,9 @@ function [reason, isDone] = resolve_phase3_terminal(state, out, distance, cfg)
     values = [state.Xt(:);state.Ut(:);state.battery.margin_norm;state.battery.soc_pct;distance];
     if ~isreal(values) || any(~isfinite(values))
         reason = 'invalid_state';
+    elseif isfield(state.battery,'voltage_limit_steps') && ...
+            (state.battery.voltage_limit_steps>0 || state.battery.torque_limit_steps>0)
+        reason='actuator_limit';
     elseif strcmp(out.terminal_reason,'mission_target_reached')
         assert(isfield(cfg,'PHASE3') && isfield(cfg.PHASE3,'options') && ...
             isfield(cfg.PHASE3.options,'mission_end_mode') && ...

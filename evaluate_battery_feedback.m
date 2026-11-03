@@ -1,4 +1,8 @@
 function battery = evaluate_battery_feedback(timeTrace, currentTrace, cfg, packIn)
+
+if isfield(cfg,'energy_provider')
+    error('robotenergy:LegacyCurrent','Fixed-pack runs require committed joint-energy samples; a magnitude proxy cannot initialize this report.');
+end
 % Missing feedback_version retains the historical prefix-current behavior.
 if strcmp(phase3battery.version(cfg),'battery_feedback_timestamp_aligned_v2')
     battery = phase3battery.evaluateAligned(timeTrace,currentTrace,cfg);

@@ -21,6 +21,7 @@ function chunk = finishChunk(a,after)
 end
 
 function value = localCharge(state)
+    if isfield(state,'energy'), value=state.energy.chargeAs; return; end
     value = 0;
     if numel(state.current_time)>=2
         value = trapz(state.current_time,abs(state.current_total));

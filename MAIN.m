@@ -180,20 +180,14 @@ end
 qp_options = optimoptions('quadprog', ...
     'Display', 'off');
 
-if isfield(Sim,'t_power')
-    t_power = Sim.t_power;
-else
-    t_power = [];
+cfgBundle=setup_RL_MPC(); cfg=cfgBundle.cfg;
+tpl=load_knee_template(cfg.PROXY.kneeCsv,cfg.PROXY.betaMc);
+data=readmatrix(cfg.PROXY.kneeCsv); Tmc=data(end,1)-data(1,1);
+if ~isfield(Sim,'energy')
+    assert(Sim.t==0,'robotenergy:Snapshot','Use a fresh snapshot for this energy model.');
+    Sim.energy=robotenergy.start(cfg.BATTERY); Sim.battery=struct();
 end
-if isfield(Sim,'Pc_all')
-    Pc_all = Sim.Pc_all;
-else
-    Pc_all = [];
-end
-
-% tracking_error = [];
-% control_effort = [];
-
+energyRows=zeros(MAX_ITER,4);
 % logging
 [tout,Xout,Uout,Xdout,Udout,Uext,FSMout] = deal([]);
 
@@ -206,9 +200,9 @@ for ii = 1:MAX_ITER
 
     % FSM and references from absolute time
     if gait == 1
-        [FSM,Xd,Ud,Xt] = fcn_FSM_bound(t_,Xt,p);
+        [FSM,Xd,Ud,Xt,fsm] = fcn_FSM_bound(t_,Xt,p);
     else
-        [FSM,Xd,Ud,Xt] = fcn_FSM(t_,Xt,p);
+        [FSM,Xd,Ud,Xt,fsm] = fcn_FSM(t_,Xt,p);
     end
 
     % QP
@@ -233,6 +227,10 @@ for ii = 1:MAX_ITER
     [t,X] = ode45(@(t,X)dynamics_SRB(t,X,Ut,Xd,0*u_ext,p),[tstart,tend],Xt);
     Xt = X(end,:)';
 
+    m=robotenergy.loadStep(X(1,:)',Xt,Ut,p,dt_sim,tstart,fsm,tpl,Tmc,cfg.ENERGY);
+    [Sim.energy,Sim.battery,y]=robotenergy.sample(Sim.energy,m,dt_sim,cfg.ENERGY,Sim.battery);
+    assert(~Sim.energy.voltageLimitSteps && ~Sim.energy.torqueLimitSteps,'robotenergy:ActuatorLimit','Motion exceeds the drive envelope.');
+    energyRows(ii,:)=[tend y.packA y.packV y.watts];
     % update rolling time window
     tstart = tend;
     tend = tstart + dt_sim;
@@ -257,49 +255,7 @@ end
 close(h_waitbar)
 fprintf('Calculation Complete!\n'); toc
 
-[tpc_chunk, Pc_chunk] = power_calc(tout, Xout, Uout, struct('BI', p.J));  % uses ALL samples of this chunk
-t_power = [t_power; tpc_chunk];
-Pc_all  = [Pc_all;  Pc_chunk];
-
-% === Predict DC bus current from power trace and plot ===
-Iopts = struct('I0', 1.0, 'eta', 1.6, 'clipNeg', true, 'smoothWin', 0);
-[stats_pred, Vbus_interp, t_rel] = predict_Current_with_Voltage(t_power, Pc_all, 'Node8_Voltage.xlsx', Iopts);
-
-I_bus = stats_pred.Ipred;
-
-params = struct();
-params.V_cell_nom = 3.3;
-params.C_cell_nom = 1.2;
-params.DoD = 1.0;
-params.n_series_fixed = 6;
-
-[Energy_Wh, Capacity_Ah, n_s, n_p, pack] = ...
-    battery_Sizing_from_Trace(t_rel, I_bus, Vbus_interp, params);
-
-
-I_cell   = I_bus ./ n_p;
-V_cell_t = Vbus_interp ./ n_s;
-
-C_nom_cell = params.C_cell_nom;
-SOC_init   = 1.0;
-
-[SOC_est_vec, SOC_final] = estimateSOC(t_rel, I_cell, V_cell_t, C_nom_cell, SOC_init);
-
-fprintf('Final SOC after 1s trace: %.2f percent\n', SOC_final * 100);
-
-figure('Name','Predicted Ibus with measured Vbus');
-subplot(2,1,1);
-plot(t_rel, Vbus_interp, 'LineWidth', 1.25); grid on;
-xlabel('time [s]'); ylabel('V_{bus} [V]');
-title('Interpolated bus voltage from robot log');
-
-subplot(2,1,2);
-plot(t_rel, I_bus, 'LineWidth', 1.25); grid on;
-xlabel('time [s]'); ylabel('I_{bus} predicted [A]');
-title(sprintf('I_{bus} prediction, I_0=%.2f A, \\eta=%.2f', ...
-      stats_pred.I0, stats_pred.eta));
-
-
+fprintf('Pack %.3f Wh, estimated SOC %.3f percent\n',Sim.energy.energyWh,Sim.battery.soc_pct);
 %% === Save for next simulation ===
 Sim.t  = Sim.t + MAX_ITER*dt_sim;   % advance absolute time
 Sim.Xt = Xt;    % persist final plant state
@@ -307,13 +263,12 @@ Sim.Ut = Ut;    % persist last control
 Sim.control_effort = control_effort;
 Sim.tracking_error = tracking_error;
 
-Sim.t_power = t_power;
-Sim.Pc_all  = Pc_all;
+Sim.last_energy_trace=array2table(energyRows,'VariableNames',{'Time','PackCurrent','PackVoltage','PowerW'});
 
 save(SnapFile,'Sim');
 
 disp('Current:')
-disp(sum(stats_pred.Ipred(:,1))/4120)
+disp(mean(energyRows(:,2)))
 
 disp('Control Effort:')
 disp(sum(control_effort(:,1)))

@@ -35,7 +35,11 @@ function a = accumulate(a,row,dt)
         assert(isscalar(t) && isscalar(current) && isreal([t,current]) && ...
             all(isfinite([t,current])) && abs(t-row.time_before)<=tol, ...
             'phase3reward:Current','Committed sample must be finite at the captured input time.');
-        if a.sample_count>0
+        if isfield(row,'state_after') && isfield(row.state_after,'energy')
+            dq=row.state_after.energy.chargeAs-row.state_before.energy.chargeAs;
+            a.sampled_charge=a.sampled_charge+dq; a.adjacent_charge=a.adjacent_charge+dq;
+            a.adjacent_support=a.adjacent_support+dt; a.fixed_pack=true;
+        elseif a.sample_count>0
             interval = t-a.last_sample_time;
             assert(interval>0,'phase3reward:Current','Current sample time must increase.');
             charge = interval*(abs(a.last_sample_A)/2+abs(current)/2);

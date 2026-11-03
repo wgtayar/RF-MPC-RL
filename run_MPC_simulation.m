@@ -95,6 +95,21 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     fsmStateToRestore = Sim.fsmInternalState;
     fsmInternalState = Sim.fsmInternalState;
 
+    physical=isfield(cfg,'ENERGY');
+    if physical
+        assert(gait==0,'robotenergy:Gait','Only trot is qualified.');
+        if ~isfield(Sim,'energy')
+            assert(Sim.t==0,'robotenergy:Snapshot','Historical snapshots require historical configuration.');
+            Sim.energy=robotenergy.start(cfg.BATTERY);
+        end
+        assert(~cfg.BATTERY.use_pack_sizing && isequal([Sim.energy.ns Sim.energy.np Sim.energy.capacity], ...
+            [cfg.BATTERY.n_series cfg.BATTERY.n_parallel cfg.BATTERY.C_nom_Ah]),'robotenergy:FixedPack','Pack changed.');
+        charge0=Sim.energy.chargeAs; elapsed0=Sim.energy.elapsed;
+        [Sim.reference_state,offset]=update_reference_position_offset(Sim,struct( ...
+            'v_cmd',v_cmd,'a_cmd',a_cmd,'reference_mode','position_continuous_v1'));
+        p.reference_position_offset_m=offset;
+        logRows=nan(max_iter,7);
+    end
     qp_options = optimoptions('quadprog', 'Display', 'off');
 
     tracking_error = zeros(max_iter, 1);
@@ -160,6 +175,7 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
                 [FSM, Xd, Ud, Xt, fsmInternalState] = ...
                     fcn_FSM(t_hor, Xt, p, fsmStateToRestore);
             end
+            if physical, Xd(1,:)=Xd(1,:)+offset; end
             fsmStateToRestore = struct();
 
             fsm_all(ii,:) = FSM(:).';
@@ -186,17 +202,24 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
             fail_Aeq_rows = size(Aeq,1);
             fail_Aeq_cols = size(Aeq,2);
 
+            if physical
+                problem=struct('H',H,'g',g,'Aineq',Aineq,'bineq',bineq,'Aeq',Aeq,'beq',beq);
+                qpres=solve_mpc_qp(problem,'default_one_shot_fallback_tight_primal_v1');
+                zval=qpres.z; exitflag=qpres.exitflag; qpOutput=qpres.output; lambda=qpres.lambda;
+            else
             [zval, ~, exitflag, qpOutput, lambda] = quadprog( ...
                 H, g, Aineq, bineq, Aeq, beq, [], [], [], qp_options);
 
+            end
             qp_exitflag(ii) = exitflag;
             qpSolveCount = qpSolveCount + 1;
             lastQpOutput = qpOutput;
             lastLambda = lambda;
 
-            if exitflag <= 0 || isempty(zval)
+            if exitflag <= 0 || isempty(zval) || (physical && ~qpres.success)
                 feasible = false;
                 fail_reason = 'quadprog';
+                if physical, fail_reason=char(qpres.classification); end
                 qpFailedCount = qpFailedCount + 1;
                 fail_iter = ii;
                 fail_time_s = t0_abs;
@@ -262,6 +285,17 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
                 break
             end
 
+            if physical
+                demand=robotenergy.loadStep(XtQp,Xt,Ut,p,dt_sim,t0_abs,fsmInternalState,kneeTpl,Tmc,cfg.ENERGY);
+                [Sim.energy,Sim.battery,y]=robotenergy.sample(Sim.energy,demand,dt_sim,cfg.ENERGY,Sim.battery);
+                logRows(ii,:)=[t0_abs+dt_sim y.packA y.cellA y.packV y.cellV y.watts y.socPct];
+                Sim.current_time(end+1,1)=t0_abs;
+                Sim.current_total(end+1,1)=y.packA;
+                if Sim.energy.voltageLimitSteps || Sim.energy.torqueLimitSteps
+                    feasible=false; fail_reason='actuator_limit'; fail_iter=ii; fail_time_s=t0_abs+dt_sim;
+                    break
+                end
+            end
             tracking_error(ii) = sum((Xt - Xd(:,1)).^2);
             control_effort(ii) = sum(Ut.^2);
 
@@ -364,6 +398,10 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
         out.control_effort_total = NaN;
         out.charge_total = 0;
         out.current_duration = 0;
+        if physical
+            out.charge_total=Sim.energy.chargeAs-charge0;
+            out.current_duration=Sim.energy.elapsed-elapsed0;
+        end
         out.battery = Sim.battery;
         out.feasible = false;
         out.fail_reason = fail_reason;
@@ -407,6 +445,12 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
         return
     end
 
+    if physical
+        charge_total=Sim.energy.chargeAs-charge0; current_duration=Sim.energy.elapsed-elapsed0;
+        battery=Sim.battery;
+        battery.bms_input=array2table(logRows,'VariableNames', ...
+            {'Time','PackCurrent','CellCurrent','PackVoltage','CellVoltage','PowerW','SOC'});
+    else
     valid = isfinite(knee_t) & isfinite(knee_I4);
     t_chunk = knee_t(valid);
     I_knee = knee_I4(valid);
@@ -438,6 +482,7 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
     end
 
     battery = evaluate_battery_feedback(Sim.current_time, Sim.current_total, cfg.BATTERY, Sim.battery);
+    end
     Sim.battery = battery;
     Sim.bms_input = battery.bms_input;
 

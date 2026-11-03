@@ -287,6 +287,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
     if ~feasible
         window.terminal_reason = 'infeasible';
+        if strcmp(fail_reason,'actuator_limit'), window.terminal_reason=fail_reason; end
     elseif window.completed_episode
         window.terminal_reason = 'mission_complete';
     elseif battery.margin_norm <= cfg.BATTERY.terminal_margin
@@ -563,7 +564,7 @@ function [nextObs, reward, isDone, logged] = rlStepFunction(action, logged)
 
     if isDone && isfield(cfg, 'LOG') && cfg.LOG.enable && cfg.LOG.print_episode
         if ~feasible
-            reason = 'infeasible';
+            reason = fail_reason;
         elseif window.completed_episode
             reason = 'mission_complete';
         elseif battery.margin_norm <= cfg.BATTERY.terminal_margin

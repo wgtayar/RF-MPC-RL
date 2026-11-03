@@ -10,7 +10,11 @@ function report = run_phase3_environment_validation(outputRoot, shortProbe, obse
         observationSchema = 'observation_v1_legacy';
     end
     source = bootstrap_RF_MPC_RL();
-    bundle = load(fullfile(source,'rlEnv_MPC_R.mat'),'cfg','initial_R','lower_abs','upper_abs');
+    if isfile(fullfile(source,'rlEnv_MPC_R.mat'))
+        bundle=load(fullfile(source,'rlEnv_MPC_R.mat'),'cfg','initial_R','lower_abs','upper_abs');
+    else
+        bundle=setup_RL_MPC();
+    end
     previousRng = rng;
     rngCleanup = onCleanup(@() rng(previousRng));
     rng(bundle.cfg.RNG_SEED,'twister');

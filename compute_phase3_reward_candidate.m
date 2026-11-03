@@ -14,8 +14,12 @@ function [reward,info] = compute_phase3_reward_candidate(window,execution,exposu
         previous = [before.current_time(end),before.current_total(end)];
     end
     p = get_params(before.gait);
+    if isfield(after,'energy')
+        charge=struct('schema','fixed_pack_interval_v1','booked_charge_As',after.energy.chargeAs-before.energy.chargeAs);
+    else
     charge = phase3reward.bookedCharge(previous,times(n+1:end),currents(n+1:end), ...
         before.t,after.t,p.simTimeStep);
+    end
     assert(abs(charge.booked_charge_As-window.charge_As)<1e-8 && ...
         abs(after.t-before.t-window.duration_s)<1e-8, ...
         'phase3reward:Accounting','Saved decision accounting differs from committed current history.');
@@ -25,8 +29,11 @@ function [reward,info] = compute_phase3_reward_candidate(window,execution,exposu
         health.([names{k} '_squared_integral_observed']) = exposure.full_squared_integrals(k);
         health.([names{k} '_finite_coverage_s']) = exposure.finite_coverage_s(k);
     end
+    actualTerminal=window.terminal_reason;
+    if strcmp(actualTerminal,'actuator_limit'), window.terminal_reason='dynamic_safety_violation'; end
     components = phase3reward.components(window,execution,health,scales);
     [reward,info] = phase3reward.scoreCoverage(components,exposure,policy);
+    info.actual_terminal_reason=actualTerminal; window.terminal_reason=actualTerminal;
     info.components = components;
     info.scale_audit = scaleAudit;
     info.charge_audit = charge;

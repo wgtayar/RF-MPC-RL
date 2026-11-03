@@ -30,6 +30,10 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 'Phase3MpcEnvironment:Bundle','Explicit config, initial R and bounds are required.');
             cfg = bundle.cfg;
             batteryFeedbackVersion = phase3battery.version(cfg.BATTERY);
+            if isfield(cfg,'ENERGY')
+                if ~isfield(options,'reference_mode'), options.reference_mode='position_continuous_v1'; end
+                if ~isfield(options,'solver_strategy'), options.solver_strategy='default_one_shot_fallback_tight_primal_v1'; end
+            end
             options = localOptions(options);
             p = get_params(0);
             validateattributes(cfg.APPLY_EVERY,{'double'},{'scalar','integer','positive'});
@@ -84,6 +88,11 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             metadata.battery_feedback_version = batteryFeedbackVersion;
             if isfield(cfg.BATTERY,'feedback_version')
                 cfg.PHASE3.battery_feedback_version = batteryFeedbackVersion;
+            end
+            if isfield(cfg,'ENERGY')
+                metadata.energy_model=cfg.ENERGY.version;
+                metadata.battery_feedback_version='fixed_pack_streaming_3rc_ekf_v1';
+                cfg.PHASE3.battery_feedback_version=metadata.battery_feedback_version;
             end
             metadata.seed = cfg.RNG_SEED;
             obj.Config = cfg;

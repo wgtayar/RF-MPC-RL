@@ -40,6 +40,14 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     terminalReason = "horizon_complete";
     initialState = state;
     chargeStart = localTrapzCharge(state.current_time, state.current_total);
+    physical=isfield(cfg,'ENERGY') && options.update_battery;
+    if physical
+        assert(state.gait==0,'robotenergy:Gait','Only the trot swing template is qualified.');
+        assert(isfield(state,'energy') && state.energy.ns==cfg.BATTERY.n_series && ...
+            state.energy.np==cfg.BATTERY.n_parallel && state.energy.capacity==cfg.BATTERY.C_nom_Ah && ~cfg.BATTERY.use_pack_sizing, ...
+            'robotenergy:FixedPack','Start a fresh run when changing pack configuration.');
+        chargeStart=state.energy.chargeAs;
+    end
     solveCount = 0;
     failedSolveCount = 0;
     trackingErrorSum = 0;
@@ -191,6 +199,12 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             break
         end
 
+        if physical
+            load=robotenergy.loadStep(XtQp,state.Xt,state.Ut,p,dt,time,state.fsm_internal_state, ...
+                state.knee_template,state.knee_parameters.Tmc,cfg.ENERGY);
+            [state.energy,state.battery,sample]=robotenergy.sample(state.energy,load,dt,cfg.ENERGY,state.battery);
+            kneeCurrent=sample.packA; % dataset current_sample_A is the actual pack current
+        end
         if options.update_battery && isfinite(kneeCurrent)
             state.current_time(end+1, 1) = time;
             state.current_total(end+1, 1) = kneeCurrent;
@@ -203,13 +217,16 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
                 XtQp, UtQp, Xd, Ud, FSM, solver, problem, ...
                 control, kneeCurrent, true, options.update_battery && isfinite(kneeCurrent));
         end
+        if physical && options.enforce_drive_limits && (state.energy.voltageLimitSteps || state.energy.torqueLimitSteps)
+            terminalReason="actuator_limit"; break
+        end
         if ~isempty(options.stop_at_position_x_m) && state.Xt(1)>=options.stop_at_position_x_m
             terminalReason = "mission_target_reached";
             break
         end
     end
 
-    if options.update_battery && numel(state.current_time) >= 2
+    if ~physical && options.update_battery && numel(state.current_time) >= 2
         state.battery = evaluate_battery_feedback( ...
             state.current_time, state.current_total, cfg.BATTERY, ...
             initialState.battery);
@@ -259,6 +276,10 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     out.final_state = localCompactState(state);
     out.charge_As = localTrapzCharge( ...
         state.current_time, state.current_total) - chargeStart;
+    if physical
+        out.charge_As=state.energy.chargeAs-chargeStart;
+        out.energy_Wh=state.energy.energyWh-initialState.energy.energyWh;
+    end
     out.Ieq_A = out.charge_As/max(out.survived_duration_s, eps);
     if options.enable_repository_disturbance
         out.disturbance = struct('profile','repository_lateral_bezier_v1', ...
@@ -272,6 +293,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
 end
 
 function options = localDefaults(options, cfg)
+    options = localSetDefault(options,'enforce_drive_limits',true);
     options = localSetDefault(options, 'enable_repository_disturbance', false);
     assert(islogical(options.enable_repository_disturbance) && ...
         isscalar(options.enable_repository_disturbance), ...

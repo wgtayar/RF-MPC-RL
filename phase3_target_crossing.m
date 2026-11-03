@@ -16,6 +16,13 @@ function result = phase3_target_crossing(steps, target, current, batteryCfg)
     result.detected = true;
     result.time_linear_s = time;
     result.time_bracket_s = [steps.time_before(k),steps.time_after(k)];
+    if isfield(current,'ledger')
+        endpoints=reshape(current.ledger(k,:),2,3);
+        value=[1-fraction,fraction]*endpoints;
+        result.charge_As=value(1); result.energy_Wh=value(2); result.soc_pct=value(3);
+        result.energy_method='interpolation_of_recorded_pack_interval_totals_and_estimates';
+        result.sampled_energy_available=true; return
+    end
     if numel(current.time) < 2 || time < current.time(1) || time > current.time(end)
         return
     end

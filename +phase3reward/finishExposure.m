@@ -6,7 +6,7 @@ function e = finishExposure(a)
     full = a.known;
     full(a.finite_steps~=a.integrated_steps) = NaN;
     sampled = NaN;
-    if a.sample_count>=2
+    if a.sample_count>=2 || isfield(a,'fixed_pack')
         sampled = a.sampled_charge;
     end
     e = struct('schema','reward_exposure_components_v1','attempts',a.attempts, ...
@@ -21,4 +21,8 @@ function e = finishExposure(a)
         'bridged_gap_count',a.gap_count,'bridged_gap_duration_s',a.gap_duration, ...
         'bridged_gap_charge_As',a.gap_charge,'full_window_charge_claim',false,'training_promoted',false, ...
         'scope','Streaming reduction of captured rows; known partial integrals do not impute missing exposure. Within-decision current support excludes startup, gaps and endpoint tails; booked cross-decision charge is separate.');
+    if isfield(a,'fixed_pack')
+        e.full_window_charge_claim=abs(duration-a.adjacent_support)<1e-9;
+        e.scope='Integrated fixed-pack model intervals; not a hardware charge measurement.';
+    end
 end

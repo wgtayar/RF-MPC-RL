@@ -4,7 +4,7 @@ function [reward, info] = compute_phase3_reward_bridge(window, cfg)
     legacyWindow = window;
     catastrophic = {'numerical_solver_failure_unrecovered', ...
         'mathematical_constraint_infeasible','invalid_state', ...
-        'dynamic_safety_violation','no_safe_action_available','unclassified_solver_failure'};
+        'actuator_limit','dynamic_safety_violation','no_safe_action_available','unclassified_solver_failure'};
     if ismember(window.terminal_reason,catastrophic)
         legacyWindow.terminal_reason = 'infeasible';
     end

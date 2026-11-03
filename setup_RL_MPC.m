@@ -1,4 +1,4 @@
-function setup_RL_MPC()
+function bundle = setup_RL_MPC()
 
     rootDir = bootstrap_RF_MPC_RL();
 
@@ -66,6 +66,8 @@ function setup_RL_MPC()
     % replaceable cell/pack/EKF settings. Saved legacy configs are unchanged.
     cfg.BATTERY = phase3battery.manuscriptConfig();
 
+    cfg.BATTERY.energy_provider='fixed_pack_joint_v1';
+    cfg.ENERGY = robotenergy.config();
     cfg.PROXY.betaMc = 0.5;
     cfg.PROXY.kneeCsv = fullfile(rootDir, 'Symmetric Knee Torques.csv');
     cfg.PROXY.alpha = 1;
@@ -241,6 +243,8 @@ function setup_RL_MPC()
     cfg.DIAGNOSTICS.save_fail_state_vectors = true;
     cfg.DIAGNOSTICS.save_success_snapshots = false;
 
+    bundle = struct('cfg',cfg,'initial_R',initial_R,'lower_abs',lower_abs,'upper_abs',upper_abs);
+    if nargout, return; end
     save(cfgPath, 'lower_abs', 'upper_abs', 'initial_R', 'cfg');
 
     obsInfo = rlNumericSpec([19 1], 'Name', 'observations');

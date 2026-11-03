@@ -50,7 +50,9 @@ function a = accumulateChunk(a,row,snapshot,cfg)
         a.integrated_steps = a.integrated_steps+1;
         a.tracking_sum = a.tracking_sum+sum((row.state_after.Xt-row.Xd(:,1)).^2);
         a.effort_sum = a.effort_sum+sum(row.state_after.Ut.^2);
-        if row.state_after.Xt(1)>=a.target_x
+        if isfield(row.state_after,'energy') && (row.state_after.energy.voltageLimitSteps || row.state_after.energy.torqueLimitSteps)
+            a.reason="actuator_limit";
+        elseif row.state_after.Xt(1)>=a.target_x
             a.reason = "mission_target_reached";
         end
     end

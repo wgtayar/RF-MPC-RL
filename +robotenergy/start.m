@@ -1,0 +1,16 @@
+function s = start(b)
+assert(~b.use_pack_sizing,'robotenergy:FixedPack','Size the pack before the experiment.');
+for k = {'n_series','n_parallel'}
+    validateattributes(b.(k{1}),{'numeric'},{'scalar','integer','positive','finite'});
+end
+validateattributes(b.C_nom_Ah,{'numeric'},{'scalar','positive','finite'});
+[t,n] = phase3battery.resolveModelOptions(b.model_options,'our params.xlsx');
+s = struct('ns',b.n_series,'np',b.n_parallel,'capacity',b.C_nom_Ah, ...
+    'soc',b.SOC_init,'rc',zeros(3,1),'chargeAs',0,'energyWh',0, ...
+    'estimate',[b.SOC_init;zeros(3,1)],'cov',n.initial_covariance, ...
+    'Q',n.process_covariance,'Rv',n.measurement_variance,'elapsed',0);
+s.grid=t.SOC; s.values=t{: ,{'R0','R1','R2','R3','C1','C2','C3'}};
+s.ocv=pchip(t.SOC,t.OCV);
+s.slope=gradient(t.OCV)./gradient(t.SOC);
+s.voltageLimitSteps=0; s.torqueLimitSteps=0;
+end

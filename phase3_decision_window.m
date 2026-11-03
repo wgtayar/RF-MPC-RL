@@ -34,6 +34,9 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
         window.Ieq_window = charge/duration;
     end
     window.charge_As = charge;
+    if isfield(after.battery,'energy_Wh')
+        window.energy_Wh=after.battery.energy_Wh-before.battery.energy_Wh;
+    end
     window.duration_s = duration;
     window.battery = after.battery;
     window.v_req = control.action_execution.v_req;

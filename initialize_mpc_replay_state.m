@@ -43,6 +43,10 @@ function state = initialize_mpc_replay_state(cfg, gait)
         'soc_pct', 100*cfg.BATTERY.SOC_init, ...
         'n_series', cfg.BATTERY.n_series, ...
         'n_parallel', cfg.BATTERY.n_parallel);
+    if isfield(cfg,'ENERGY')
+        state.energy=robotenergy.start(cfg.BATTERY);
+        state.battery.energy_Wh=0; state.battery.charge_As=0;
+    end
     rDiagonal = diag(p.R);
     state.R = rDiagonal(1:3);
     gammaV = cfg.GAMMA_V_MISSION;
