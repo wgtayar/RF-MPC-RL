@@ -53,6 +53,10 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     trackingErrorSum = 0;
     controlEffortSum = 0;
     integratedSteps = 0;
+    driveRows = zeros(0,53); driveInputs=zeros(0,114);
+    if options.capture_drive_trace
+        driveRows=zeros(numberSteps,53); driveInputs=zeros(numberSteps,114);
+    end
     lastFsm = nan(4,1);
     lastStanceDuration = NaN;
     disturbanceSamples = zeros(0,7);
@@ -243,6 +247,13 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             end
             state.energy=energy; state.battery=battery;
             kneeCurrent=sample.packA; % dataset current_sample_A is the actual pack current
+            if options.capture_drive_trace
+                driveRows(integratedSteps+1,:)=[time,state.t,load.watts,load.requiredV,load.peakTorque, ...
+                    load.jointTorque(:)',load.jointSpeed(:)',load.phaseCurrent(:)',load.motorVoltage(:)'];
+                fsm=state.fsm_internal_state;
+                driveInputs(integratedSteps+1,:)=[XtQp(:)',state.Xt(:)',state.Ut(:)', ...
+                    Xd(:,1)',fsm.FSM(:)',fsm.Ta(:)',fsm.Tb(:)'];
+            end
         end
         if options.update_battery && isfinite(kneeCurrent)
             state.current_time(end+1, 1) = time;
@@ -319,6 +330,13 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         out.charge_As=state.energy.chargeAs-chargeStart;
         out.energy_Wh=state.energy.energyWh-initialState.energy.energyWh;
     end
+    if options.capture_drive_trace
+        out.drive_trace=driveRows(1:integratedSteps,:);
+        out.drive_trace_columns={'time_before_s','time_after_s','watts','required_voltage_V', ...
+            'peak_motor_torque_Nm','joint_torque_12','joint_speed_12','phase_current_12','motor_voltage_12'};
+        out.drive_inputs=driveInputs(1:integratedSteps,:);
+        out.drive_input_columns={'Xt_qp_30','Xt_after_30','Ut_12','Xd_first_30','FSM_4','Ta_4','Tb_4'};
+    end
     out.Ieq_A = out.charge_As/max(out.survived_duration_s, eps);
     if options.enable_repository_disturbance
         out.disturbance = struct('profile','repository_lateral_bezier_v1', ...
@@ -341,6 +359,13 @@ function options = localDefaults(options, cfg)
     options = localSetDefault(options, 'solver_strategy', "default");
     options = localSetDefault(options, 'switch_time_s', inf);
     options = localSetDefault(options, 'capture_trace', false);
+    options = localSetDefault(options, 'capture_drive_trace', false);
+    assert(islogical(options.capture_drive_trace) && isscalar(options.capture_drive_trace), ...
+        'simulate_mpc_horizon:DriveTrace','Require a scalar logical drive-trace flag.');
+    if options.capture_drive_trace
+        assert(isfield(cfg,'ENERGY') && isfield(options,'update_battery') && options.update_battery, ...
+            'simulate_mpc_horizon:DriveTrace','Drive traces require the fixed-pack energy path.');
+    end
     options = localSetDefault(options, 'trace_start_time_s', -inf);
     options = localSetDefault(options, 'classify_failure', true);
     options = localSetDefault(options, 'capture_first_problem', false);
