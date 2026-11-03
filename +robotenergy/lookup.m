@@ -9,8 +9,9 @@ z=max(g(1),min(g(end),z));
 k=min(numel(g)-1,find(g<=z,1,'last'));
 width=g(k+1)-g(k); u=(z-g(k))/width;
 r=((1-u)*s.values(k,:)+u*s.values(k+1,:))';
-dr=((s.values(k+1,:)-s.values(k,:))/width)';
 o=ppval(s.ocv,z);
+if nargout<3, return; end
+dr=((s.values(k+1,:)-s.values(k,:))/width)';
 if isfield(s,'ocvDerivative')
     derivative=s.ocvDerivative;
 else
