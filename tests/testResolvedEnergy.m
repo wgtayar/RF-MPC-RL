@@ -42,7 +42,7 @@ classdef testResolvedEnergy < matlab.unittest.TestCase
    tc.verifyGreaterThan(b.drive_sampled_peak_cell_current_A,y.cellA);
   end
   function resolvedDerivativeMatchesIKWithRotationDrift(tc)
-   bundle=setup_RL_MPC(); state=initialize_mpc_replay_state(bundle.cfg,0); p=get_params(0);
+   bundle=setup_RL_MPC('legacy_frozen_v1'); state=initialize_mpc_replay_state(bundle.cfg,0); p=get_params(0);
    addpath(fileparts(fileparts(mfilename('fullpath'))));
    x=state.Xt; R=reshape(x(7:15),3,3)*diag([1+1e-4,1-2e-4,1+3e-4]); x(7:15)=R(:);
    dx=zeros(30,1); dx(1:3)=[.02;-.01;.015];
@@ -82,7 +82,7 @@ classdef testResolvedEnergy < matlab.unittest.TestCase
    tc.verifyError(@()robotenergy.sampleResolved(s,d,e,b),'robotenergy:Empty');
   end
   function denseProviderPreservesMotionAndBothConsumersAgree(tc)
-   b=setup_RL_MPC(); c=b.cfg;
+   b=setup_RL_MPC('legacy_frozen_v1'); c=b.cfg;
    addpath(fileparts(fileparts(mfilename('fullpath'))));
    c.BATTERY.streaming_estimator_version='fixed_pack_resolved_ekf_v3';
    c.ENERGY.integration_method='dense_midpoint_v1'; c.ENERGY.integration_substeps=32;
@@ -113,7 +113,7 @@ classdef testResolvedEnergy < matlab.unittest.TestCase
    tc.verifyEqual(saved.Sim.energy.cov,dense.energy.cov,'AbsTol',1e-12);
   end
   function denseFailureRollsBackAcceptedInterval(tc)
-   b=setup_RL_MPC(); c=b.cfg;
+   b=setup_RL_MPC('legacy_frozen_v1'); c=b.cfg;
    addpath(fileparts(fileparts(mfilename('fullpath'))));
    c.BATTERY.streaming_estimator_version='fixed_pack_resolved_ekf_v3';
    c.ENERGY.integration_method='dense_midpoint_v1'; c.ENERGY.integration_substeps=32;

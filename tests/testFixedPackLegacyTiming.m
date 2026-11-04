@@ -8,7 +8,7 @@ classdef testFixedPackLegacyTiming < matlab.unittest.TestCase
     methods (TestMethodSetup)
         function configure(tc)
             src=bootstrap_RF_MPC_RL();
-            tc.Bundle=setup_RL_MPC();
+            tc.Bundle=setup_RL_MPC('legacy_frozen_v1');
             tc.Bundle.cfg.CHUNK_DURATION=.02;
             tc.Bundle.cfg.APPLY_EVERY=1;
             tc.Bundle.cfg.EP_STEPS=10;

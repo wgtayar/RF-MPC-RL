@@ -1,4 +1,16 @@
-function bundle = setup_RL_MPC()
+function bundle = setup_RL_MPC(profile)
+% New work uses the captured energy-mission profile. Historical numerical
+% reproduction must request legacy_frozen_v1 explicitly.
+    if nargin<1, profile='energy_mission_v1'; end
+    if strcmp(profile,'energy_mission_v1')
+        bundle=setup_energy_mission_rl();
+        if nargout==0
+            fprintf('Energy-mission configuration ready (fixed 20S1P baseline).\n');
+            fprintf('Use train_energy_mission_rl(outputRoot, options) for captured fresh-agent tests.\n');
+        end
+        return
+    end
+    assert(strcmp(profile,'legacy_frozen_v1'),'setup_RL_MPC:Profile','Unknown setup profile.');
 
     rootDir = bootstrap_RF_MPC_RL();
 

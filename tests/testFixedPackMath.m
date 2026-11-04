@@ -76,7 +76,7 @@ classdef testFixedPackMath < matlab.unittest.TestCase
             tc.verifyError(@()robotenergy.start(b),'robotenergy:EstimatorVersion');
         end
         function bodyMotionVirtualWorkAndElectricalPower(tc)
-            b=setup_RL_MPC(); s=initialize_mpc_replay_state(b.cfg,0); p=get_params(0);
+            b=setup_RL_MPC('legacy_frozen_v1'); s=initialize_mpc_replay_state(b.cfg,0); p=get_params(0);
             x0=s.Xt; x1=x0; dt=1e-6;
             v=[.02;-.01;.015]; omega=[.04;-.03;.02];
             rot=reshape(x0(7:15),3,3);

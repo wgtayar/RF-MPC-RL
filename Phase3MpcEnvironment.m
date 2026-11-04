@@ -34,6 +34,17 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 if ~isfield(options,'reference_mode'), options.reference_mode='position_continuous_v1'; end
                 if ~isfield(options,'solver_strategy'), options.solver_strategy='default_one_shot_fallback_tight_primal_v1'; end
             end
+            if isfield(cfg,'ENERGY_RL')
+                if ~isfield(options,'observation_schema'),options.observation_schema='observation_energy_mission_v1';end
+                if ~isfield(options,'reward_schema'),options.reward_schema='reward_energy_mission_v1';end
+                if ~isfield(options,'mission_end_mode'),options.mission_end_mode='mpc_step_target_v1';end
+                assert(strcmp(options.observation_schema,'observation_energy_mission_v1') && ...
+                    strcmp(options.reward_schema,'reward_energy_mission_v1') && ...
+                    strcmp(options.mission_end_mode,'mpc_step_target_v1') && ...
+                    ~isfield(options,'initial_condition'), ...
+                    'energyMission:Schema','Energy mission requires paired current schemas, exact target stop, and configured high-SOC reset.');
+                energy_mission_scales(cfg);
+            end
             options = localOptions(options);
             p = get_params(0);
             validateattributes(cfg.APPLY_EVERY,{'double'},{'scalar','integer','positive'});
@@ -55,7 +66,11 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 observationSchema = options.observation_schema;
             end
             if ~strcmp(observationSchema,'observation_v1_legacy')
-                v2 = phase3_observation_v2_schema(cfg,observationSchema);
+                if strcmp(observationSchema,'observation_energy_mission_v1')
+                    v2=energy_mission_observation_schema(cfg);
+                else
+                    v2 = phase3_observation_v2_schema(cfg,observationSchema);
+                end
                 observationDimension = v2.dimension;
             end
             observationInfo = rlNumericSpec([observationDimension,1],'Name','observations');
@@ -79,6 +94,13 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 cfg.PHASE3.reward_version = options.reward_schema;
                 cfg.PHASE3.environment_version = 'phase3_captured_environment_coverage_reward_v1';
             end
+            if strcmp(options.reward_schema_if_present,'reward_energy_mission_v1')
+                assert(isfield(cfg,'ENERGY_RL'),'energyMission:Config','Energy mission configuration required.');
+                cfg.PHASE3.reward_version='reward_energy_mission_v1';
+                cfg.PHASE3.environment_version='phase3_energy_mission_environment_v1';
+            end
+            options=rmfield(options,'reward_schema_if_present');
+            cfg.PHASE3.options=options;
             metadata.observation_schema_version = cfg.PHASE3.observation_schema;
             metadata.reward_version = cfg.PHASE3.reward_version;
             metadata.solver_strategy = options.solver_strategy;
@@ -136,8 +158,12 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 'reset_stream_state',obj.ResetStream.State);
             observationAudit = struct();
             if obj.usesObservationV2()
-                [observation,observationAudit] = build_phase3_observation_v2(obj.State,observation,struct(), ...
-                    cfg,cfg.PHASE3.observation_schema);
+                if strcmp(cfg.PHASE3.observation_schema,'observation_energy_mission_v1')
+                    [observation,observationAudit]=build_energy_mission_observation(obj.State,observation,struct(),cfg);
+                else
+                    [observation,observationAudit] = build_phase3_observation_v2(obj.State,observation,struct(), ...
+                        cfg,cfg.PHASE3.observation_schema);
+                end
                 obj.Observation = observation;
                 obj.State.decision_bookkeeping.observation = observation;
             end
@@ -161,7 +187,9 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             try
                 [chunks,terminal] = obj.advanceDecision(control);
                 window = phase3_decision_window(before,obj.State,chunks,control,obj.Config,terminal);
-                if strcmp(obj.Config.PHASE3.reward_version,'reward_phase3_coverage_candidate_v1')
+                if strcmp(obj.Config.PHASE3.reward_version,'reward_energy_mission_v1')
+                    [reward,rewardInfo]=compute_energy_mission_reward(window,obj.Config);
+                elseif strcmp(obj.Config.PHASE3.reward_version,'reward_phase3_coverage_candidate_v1')
                     exposure = obj.Writer.decisionRewardExposure(firstRow,obj.Writer.RowCount);
                     [reward,rewardInfo] = compute_phase3_reward_candidate(window,control.action_execution, ...
                         exposure,before,obj.State,obj.Config,obj.Options.reward_policy);
@@ -277,8 +305,12 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 window.Ieq_window);
             audit = struct();
             if obj.usesObservationV2()
-                [observation,audit] = build_phase3_observation_v2(obj.State,observation,obj.Writer.lastRow(), ...
-                    cfg,cfg.PHASE3.observation_schema);
+                if strcmp(cfg.PHASE3.observation_schema,'observation_energy_mission_v1')
+                    [observation,audit]=build_energy_mission_observation(obj.State,observation,obj.Writer.lastRow(),cfg,window);
+                else
+                    [observation,audit] = build_phase3_observation_v2(obj.State,observation,obj.Writer.lastRow(), ...
+                        cfg,cfg.PHASE3.observation_schema);
+                end
             end
         end
 
@@ -330,7 +362,7 @@ function options = localOptions(options)
     if isfield(options,'observation_schema')
         options.observation_schema = validatestring(options.observation_schema, ...
             {'observation_v1_legacy','observation_v2_dynamic_health_candidate_v1', ...
-            'observation_v2_dynamic_health_candidate_v2'});
+            'observation_v2_dynamic_health_candidate_v2','observation_energy_mission_v1'});
     end
     if isfield(options,'mission_end_mode')
         mode = string(options.mission_end_mode);
@@ -340,10 +372,12 @@ function options = localOptions(options)
     end
     if isfield(options,'reward_schema')
         schema = string(options.reward_schema);
-        assert(isscalar(schema) && any(schema==["reward_phase3_legacy_bridge_v1","reward_phase3_coverage_candidate_v1"]), ...
+        assert(isscalar(schema) && any(schema==["reward_phase3_legacy_bridge_v1","reward_phase3_coverage_candidate_v1","reward_energy_mission_v1"]), ...
             'Phase3MpcEnvironment:RewardSchema','Require an explicit supported reward schema.');
         options.reward_schema = char(schema);
     end
+    options.reward_schema_if_present='';
+    if isfield(options,'reward_schema'),options.reward_schema_if_present=options.reward_schema;end
     candidate = isfield(options,'reward_schema') && strcmp(options.reward_schema,'reward_phase3_coverage_candidate_v1');
     assert(isfield(options,'reward_policy')==candidate, ...
         'Phase3MpcEnvironment:RewardPolicy','Only the explicit candidate schema requires a complete reward policy.');

@@ -46,5 +46,5 @@ classdef testInstantaneousDrive < matlab.unittest.TestCase
     end
 end
 function [s,p,e]=fixture()
-b=setup_RL_MPC(); s=initialize_mpc_replay_state(b.cfg,0); p=get_params(0); e=b.cfg.ENERGY;
+b=setup_RL_MPC('legacy_frozen_v1'); s=initialize_mpc_replay_state(b.cfg,0); p=get_params(0); e=b.cfg.ENERGY;
 end

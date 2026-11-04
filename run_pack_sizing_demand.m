@@ -6,7 +6,7 @@ src=bootstrap_RF_MPC_RL();
 assert(~isfolder(root) && ~isfile(root),'sizing:Exists','Use a new output root.');
 sha=gitValue(src,'rev-parse HEAD');
 assert(isempty(gitValue(src,'status --porcelain')),'sizing:Dirty','Commit source before acquisition.');
-b=setup_RL_MPC(); c=b.cfg; s=initialize_mpc_replay_state(c,0);
+b=setup_RL_MPC('legacy_frozen_v1'); c=b.cfg; s=initialize_mpc_replay_state(c,0);
 mkdir(root); save(fullfile(root,'configuration.mat'),'b','-v7.3');
 meta=struct('schema','requested_pack_sizing_trace_v1','source_sha',sha, ...
  'branch',gitValue(src,'branch --show-current'),'dirty',false,'matlab',version, ...

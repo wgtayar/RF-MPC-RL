@@ -3,7 +3,7 @@ function r=run_fixed_pack_crosscheck(root)
 src=bootstrap_RF_MPC_RL();
 sourceSha=localGit(src,'rev-parse HEAD'); sourceStatus=localGit(src,'status --porcelain');
 assert(~isfolder(root) && ~isfile(root),'Output exists.'); mkdir(root);
-b=setup_RL_MPC(); c=b.cfg;
+b=setup_RL_MPC('legacy_frozen_v1'); c=b.cfg;
 % This historical batch crosscheck assumes one constant load/current per MPC
 % interval. Keep that profile explicit after the RL default becomes dense.
 c.BATTERY=phase3battery.manuscriptConfig(); c.BATTERY.energy_provider='fixed_pack_joint_v1';

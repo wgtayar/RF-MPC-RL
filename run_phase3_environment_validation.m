@@ -13,7 +13,7 @@ function report = run_phase3_environment_validation(outputRoot, shortProbe, obse
     if isfile(fullfile(source,'rlEnv_MPC_R.mat'))
         bundle=load(fullfile(source,'rlEnv_MPC_R.mat'),'cfg','initial_R','lower_abs','upper_abs');
     else
-        bundle=setup_RL_MPC();
+        bundle=setup_RL_MPC('legacy_frozen_v1');
     end
     previousRng = rng;
     rngCleanup = onCleanup(@() rng(previousRng));

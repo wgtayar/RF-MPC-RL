@@ -1,0 +1,64 @@
+function bundle = setup_energy_mission_rl(options)
+%SETUP_ENERGY_MISSION_RL Explicit mission/charge objective on the fixed plant.
+% Baseline pack is retained pending physical-design review. No load scaling,
+% cell resizing, fictitious auxiliary demand, or SOC reset within a mission.
+if nargin<1, options=struct(); end
+assert(isstruct(options) && isscalar(options),'energyMission:Options','Options must be a scalar struct.');
+defaults=struct('initial_soc',.95,'target_distance_m',320,'mission_duration_s',600, ...
+    'decision_interval_s',50,'time_weight',.5,'seed',20260903);
+assert(all(ismember(fieldnames(options),fieldnames(defaults))), ...
+    'energyMission:Options','Unknown mission option.');
+for f=fieldnames(defaults).'
+    if ~isfield(options,f{1}),options.(f{1})=defaults.(f{1});end
+end
+assert(ismember(options.initial_soc,[.95,1]),'energyMission:InitialSOC', ...
+    'Operational profiles start at 95 or 100 percent; diagnostic low-SOC tests are separate.');
+validateattributes(options.target_distance_m,{'double'},{'scalar','real','finite','positive'});
+validateattributes(options.mission_duration_s,{'double'},{'scalar','real','finite','positive'});
+validateattributes(options.decision_interval_s,{'double'},{'scalar','real','finite','positive'});
+validateattributes(options.time_weight,{'double'},{'scalar','real','finite','>=',0,'<=',1});
+validateattributes(options.seed,{'double'},{'scalar','integer','nonnegative','<=',2^32-1});
+oldRng=rng; cleanup=onCleanup(@()rng(oldRng));
+bundle=setup_RL_MPC('legacy_frozen_v1'); c=bundle.cfg;
+c.BATTERY.SOC_init=options.initial_soc; c.BATTERY.metric_init=100*options.initial_soc;
+c.MISSION.D_TARGET_M=options.target_distance_m; c.MISSION_DURATION=options.mission_duration_s;
+% Keep established 5-second chunks, allowing a shorter explicitly requested
+% decision interval only when it is an integer number of MPC timesteps.
+c.CHUNK_DURATION=min(5,options.decision_interval_s);
+c.APPLY_EVERY=options.decision_interval_s/c.CHUNK_DURATION;
+assert(abs(c.APPLY_EVERY-round(c.APPLY_EVERY))<1e-10, ...
+    'energyMission:DecisionGrid','Decision interval must be <=5 s or a multiple of 5 s.');
+c.APPLY_EVERY=round(c.APPLY_EVERY);
+p=get_params(0);
+assert(abs(c.CHUNK_DURATION/p.simTimeStep-round(c.CHUNK_DURATION/p.simTimeStep))<1e-8 && ...
+ abs(c.MISSION_DURATION/p.simTimeStep-round(c.MISSION_DURATION/p.simTimeStep))<1e-8, ...
+ 'energyMission:DurationGrid','Mission and chunks must lie on the MPC time grid.');
+c.EP_STEPS=ceil(c.MISSION_DURATION/options.decision_interval_s);
+c.MISSION.WINDOW_TARGET_M=c.MISSION.D_TARGET_M/c.EP_STEPS;
+c.V_REQ_FIXED=c.MISSION.D_TARGET_M/c.MISSION_DURATION;
+maxV=c.V_MIN+c.GAMMA_V_MAX*(c.V_MAX-c.V_MIN);
+assert(c.V_REQ_FIXED>=c.V_MIN && c.V_REQ_FIXED<=maxV, ...
+ 'energyMission:MissionPace','Requested average mission pace is outside the configured governor range.');
+c.GAMMA_V_MISSION=(c.V_REQ_FIXED-c.V_MIN)/(c.V_MAX-c.V_MIN);
+c.START_HIGH.gamma_v_init=c.GAMMA_V_MISSION; c.START_HIGH.gamma_v_floor=c.GAMMA_V_MISSION;
+c.RNG_SEED=options.seed;
+reference=jsondecode(fileread(fullfile(fileparts(mfilename('fullpath')), ...
+    'energy_mission_reference.json')));
+assert(strcmp(reference.pack_id,c.BATTERY.fixed_pack_spec.id), ...
+    'energyMission:ReferencePack','Reference normalization belongs to another pack.');
+c.ENERGY_RL=struct('version','energy_mission_v1','options',options, ...
+ 'time_weight',options.time_weight,'charge_weight',1-options.time_weight, ...
+ 'reference_charge_As',reference.charge_As/reference.distance_m*c.MISSION.D_TARGET_M, ...
+ 'reference',reference,'observation_schema','observation_energy_mission_v1', ...
+ 'reward_schema','reward_energy_mission_v1','training_promoted',false, ...
+ 'normalization_scope','Measured reference charge per meter; scaling is a reward unit, never predicted consumption or a safety limit.', ...
+ 'preference_scope','Provisional scalarization for Pareto comparison; no selected best time-energy tradeoff.');
+c.IEQ_REF=c.BATTERY.C_nom_Ah*c.BATTERY.n_parallel; % 1C pack unit, not a current rating.
+c.LEGACY_REWARD=c.REWARD;
+c.REWARD=struct('version','reward_energy_mission_v1', ...
+ 'description','Completion priority with undiscounted elapsed-time and committed pack-charge costs.');
+c.TRAIN.discount_factor=1;
+c.EXPERIMENT.id='energy_mission_fixed_20s1p_v1';
+c.EXPERIMENT.description='High-SOC fixed-pack mission, actual charge objective, captured supervisory interface; no trained-policy claim.';
+bundle.cfg=c;
+end

@@ -17,6 +17,10 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
     distance = max(0,after.Xt(1)-bookkeeping.initial_position_x);
     duration = after.t-before.t;
     charge = sum(cellfun(@(out) out.charge_As,chunks));
+    if isfield(cfg,'ENERGY_RL')
+        assert(abs(charge-(after.energy.chargeAs-before.energy.chargeAs))<1e-8, ...
+            'energyMission:ChargeAccounting','Chunks must book the same physical charge used by SOC.');
+    end
     integrated = cellfun(@(out) out.integrated_steps,chunks) > 0;
     tracking = cellfun(@(out) out.tracking_error_sum,chunks);
     effort = cellfun(@(out) out.control_effort_sum,chunks);
@@ -30,6 +34,7 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
         window.control_effort_mean = mean(effort(integrated));
     end
     window.Ieq_window = cfg.IEQ_REF;
+    if isfield(cfg,'ENERGY_RL'),window.Ieq_window=0;end
     if duration > 0
         window.Ieq_window = charge/duration;
     end
@@ -38,6 +43,8 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
         window.energy_Wh=after.battery.energy_Wh-before.battery.energy_Wh;
     end
     window.duration_s = duration;
+    window.elapsed_time_s=after.t;
+    if isfield(after,'energy'),window.cumulative_charge_As=after.energy.chargeAs;end
     window.battery = after.battery;
     window.v_req = control.action_execution.v_req;
     window.a_req = control.action_execution.a_req;

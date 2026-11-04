@@ -46,7 +46,7 @@ classdef testPackSizingBound < matlab.unittest.TestCase
         function syntheticFullTraceRetainsEndpointsAndConservation(tc)
             bootstrap_RF_MPC_RL(); fixture=tc.applyFixture(matlab.unittest.fixtures.TemporaryFolderFixture);
             inputRoot=fullfile(fixture.Folder,'input'); mkdir(inputRoot); outputRoot=fullfile(fixture.Folder,'output');
-            b=setup_RL_MPC(); b.cfg.BATTERY=phase3battery.manuscriptConfig();
+            b=setup_RL_MPC('legacy_frozen_v1'); b.cfg.BATTERY=phase3battery.manuscriptConfig();
             save(fullfile(inputRoot,'configuration.mat'),'b');
             steps=4; fine=4; dt=.01/fine; N=steps*fine;
             sample_time_s=((1:N)'-.5)*dt; watts=(1:N)'+10; required_voltage_V=ones(N,1);

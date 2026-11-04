@@ -1,6 +1,6 @@
 function result=run_fixed_pack_mission_review(target,deadline,policy)
 % Fixed pack, production governor/reference/solver, stop at the first violation.
-b=setup_RL_MPC(); c=b.cfg; s=initialize_mpc_replay_state(c,0);
+b=setup_RL_MPC('legacy_frozen_v1'); c=b.cfg; s=initialize_mpc_replay_state(c,0);
 origin=s.Xt(1); attempts=0; failed=0; rescued=0; peakTilt=0; decisions=0;
 reason="time_limit";
 while s.t < deadline-1e-8

@@ -2,7 +2,7 @@ function report=run_energy_review(speeds,duration)
 % Deterministic open-loop qualification, no training or sealed data.
 if nargin<1, speeds=[.5 .66 .70]; end
 if nargin<2, duration=5; end
-bundle=setup_RL_MPC(); cfg=bundle.cfg;
+bundle=setup_RL_MPC('legacy_frozen_v1'); cfg=bundle.cfg;
 rows=cell(numel(speeds),1);
 for j=1:numel(speeds)
  s=initialize_mpc_replay_state(cfg,0);

@@ -10,7 +10,7 @@ classdef testFrozenPack < matlab.unittest.TestCase
    tc.verifyError(@()robotenergy.start(b),'robotenergy:FixedPack');
   end
   function resetsKeepThePackAndClearOnlyDynamicState(tc)
-   b=setup_RL_MPC(); first=initialize_mpc_replay_state(b.cfg,0);
+   b=setup_RL_MPC('legacy_frozen_v1'); first=initialize_mpc_replay_state(b.cfg,0);
    changed=b.cfg; changed.BATTERY.SOC_init=.25; changed.BATTERY.metric_init=25;
    low=initialize_mpc_replay_state(changed,0);
    fresh=initialize_mpc_replay_state(b.cfg,0);

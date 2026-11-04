@@ -11,15 +11,24 @@ function report = run_phase3_policy_evaluation(policyId, outputRoot, options)
     previousRng = rng;
     rngCleanup = onCleanup(@() rng(previousRng));
     savedPath = fullfile(source,'rlEnv_MPC_R.mat');
-    savedBundle = isfile(savedPath);
+    configurationMode='fresh_energy_mission';
+    if isfield(options,'configuration_mode')
+        configurationMode=validatestring(options.configuration_mode,{'fresh_energy_mission','saved_legacy'});
+        options=rmfield(options,'configuration_mode');
+    end
+    savedBundle = strcmp(configurationMode,'saved_legacy');
+    assert(~savedBundle || isfile(savedPath),'energyMission:SavedBundle','Explicit saved legacy mode requires an archived worker bundle.');
     if savedBundle
         bundle = load(savedPath,'cfg','initial_R','lower_abs','upper_abs');
-        configurationOrigin = 'saved_worker_bundle';
+        assert(~isfield(bundle.cfg,'ENERGY_RL'),'energyMission:ConfigurationMode', ...
+            'New profiles must be constructed explicitly, not silently restored as legacy.');
+        configurationOrigin = 'explicit_saved_legacy_worker_bundle';
     else
         bundle = setup_RL_MPC();
         configurationOrigin = 'fresh_setup';
     end
     options = localOptions(options,~savedBundle && isfield(bundle.cfg,'ENERGY'));
+    options.configuration_mode=configurationMode;
     bundle.cfg.RNG_SEED = options.seed;
     bundle.cfg.POLICY_EVALUATION = struct('policy_id',char(policyId),'options',options, ...
         'scenario','current_config_not_claimed_historical_reproduction', ...
@@ -27,6 +36,11 @@ function report = run_phase3_policy_evaluation(policyId, outputRoot, options)
         'learning_rates_used',[],'exploration_noise_used',[]);
     rng(options.seed,'twister');
     policy = load_phase3_policy(policyId);
+    if isfield(bundle.cfg,'ENERGY_RL')
+        assert(~strcmp(policy.kind,'actor'),'energyMission:CheckpointMismatch', ...
+            'Historical actors cannot consume the new observation/current semantics.');
+        if ~isfield(options,'observation_schema'),options.observation_schema='observation_energy_mission_v1';end
+    end
     environmentOptions = struct('reference_mode',options.reference_mode,'solver_strategy',options.solver_strategy);
     if isfield(options,'mission_end_mode')
         environmentOptions.mission_end_mode = options.mission_end_mode;
@@ -114,7 +128,7 @@ function options = localOptions(options,freshFixedPack)
     if isfield(options,'observation_schema')
         options.observation_schema = validatestring(options.observation_schema, ...
             {'observation_v1_legacy','observation_v2_dynamic_health_candidate_v1', ...
-            'observation_v2_dynamic_health_candidate_v2'});
+            'observation_v2_dynamic_health_candidate_v2','observation_energy_mission_v1'});
     end
     for name = fieldnames(defaults).'
         if ~isfield(options,name{1})
