@@ -42,7 +42,7 @@ try
       'true_soc',env.State.energy.soc,'estimated_soc',env.State.energy.estimate(1), ...
       'v_applied',info.action_execution.v_exec,'reward',r,'charge_cost',info.reward_info.charge_cost, ...
       'time_cost',info.reward_info.time_cost,'terminal',info.terminal_reason);
-     decisions(end+1)=d; %#ok<AGROW>
+     if isempty(decisions),decisions=d;else,decisions(end+1)=d;end %#ok<AGROW>
      fprintf('[%s] t=%.2f x=%.4f Q=%.6f SOC=%.6f terminal=%s\n',name,d.time_s,d.distance_m,d.charge_As,d.true_soc,d.terminal);
     end
     q=env.State.energy.chargeAs;dt=env.State.t;sc=energy_mission_scales(c);
