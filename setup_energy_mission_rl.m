@@ -5,7 +5,12 @@ function bundle = setup_energy_mission_rl(options)
 if nargin<1, options=struct(); end
 assert(isstruct(options) && isscalar(options),'energyMission:Options','Options must be a scalar struct.');
 defaults=struct('initial_soc',.95,'target_distance_m',320,'mission_duration_s',600, ...
-    'decision_interval_s',50,'time_weight',.5,'seed',20260903);
+    'decision_interval_s',50,'time_weight',.34,'seed',20260903);
+% Default time weight 0.34 (charge 0.66) is the balanced preference from
+% calibrate_energy_mission_weights on the 2026-11-05 matched comparisons:
+% indifference between the slowest and fastest tested fixed speeds is
+% w*=0.337 (95% start) and 0.334 (100% start); an interior speed wins for
+% w in about [0.26, 0.51]. Recalibrate if the plant, pack or reference changes.
 assert(all(ismember(fieldnames(options),fieldnames(defaults))), ...
     'energyMission:Options','Unknown mission option.');
 for f=fieldnames(defaults).'

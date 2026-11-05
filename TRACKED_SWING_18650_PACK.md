@@ -60,3 +60,29 @@ Specification: `+phase3battery/pack_18650_4ah_specification.json`, loaded by
 selection rule and evidence are recorded in the specification and in the
 monitor run report. Electronics/auxiliary load stays zero and the inverter
 ideal, by investigator decision (research control study first).
+
+## Measured plant (clean source f882feb)
+
+Full 320 m native mission, 95% start, requested 0.58 m/s, drive limits
+enforced: complete in 554.75 s, 55,475 QP solves (0 failed), 0 voltage or
+torque limit intervals, peak required 23.88 V, 3.815 Wh drive energy,
+493.48 As, final SOC 91.57%. Interval-level replay of the same trace:
+7S passes from 25/95/100% (minimum headroom 1.89/3.83/4.00 V); 6S fails from
+every start; 8S passes. Development probes: full-speed request (0.66 m/s)
+peaks at 29.88 V (fails on 7S at every start, so the usable speed ceiling falls
+with SOC); requested mission pace peaks at 20.98 V. Required voltage rises
+with walking speed (22.4 V at 0.545 m/s to 29.9 V at 0.66 m/s).
+
+`energy_mission_reference.json` is this clean mission (charge per meter is the
+reward normalization unit).
+
+## Time/charge preference
+
+`calibrate_energy_mission_weights` on matched 20 m / 50 s native runs (speeds
+0.45-0.66 m/s, 95% and 100% starts, clean source f882feb) gives the
+indifference weight between slowest and fastest policies
+`w* = dQn/(dTn + dQn)` = 0.337 (95%) and 0.334 (100%). Default `time_weight`
+is 0.34. Winner by weight: 0.45 m/s below ~0.26, 0.50 m/s to ~0.39, 0.55 m/s
+to ~0.51, fastest above. On the full 320 m / 600 s mission the deadline
+already excludes requests below about 0.54 m/s, and 7S excludes the fastest
+requests, so the learned policy must trade within that SOC-dependent band.

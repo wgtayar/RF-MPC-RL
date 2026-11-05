@@ -1,13 +1,17 @@
 {
   "schema": "energy_mission_reference_v2",
   "pack_id": "beyond_torque_7s1p_18650_4ah_20261105_v1",
-  "charge_As": 465.65680444555596,
-  "distance_m": 319.40912458749045,
-  "duration_s": 600.0,
-  "energy_Wh": 3.611950355528867,
+  "charge_As": 493.48167870391,
+  "distance_m": 320.00124103413737,
+  "duration_s": 554.75,
+  "energy_Wh": 3.815388970668142,
   "initial_soc": 0.95,
-  "policy": "requested mission pace 0.5333 m/s (governor, min acceleration)",
+  "policy": "fixed requested 0.58 m/s governor speed, minimum acceleration, drive limits enforced",
   "swing_model": "tracked_bezier_v1",
-  "status": "development_probe_dirty_source",
-  "scope": "Normalization unit only (charge per meter times D): native 7S1P 4 Ah tracked-swing mission at requested mission pace; not a forecast or safety bound. Superseded by the clean qualification value if it differs."
+  "source_sha": "f882feb7806f9332ebaf6bf513cd5ed3d5804841",
+  "configuration_sha256": "a66cb6aab42faac7a55e72001597ce12d24a6aa936c2e721c41b8650d71e413f",
+  "result_sha256": "2cb6cceaafc9da601ab9d0d9949a491b86d45b9a90f9b597a2fe85d91bb674f4",
+  "drive_trace_sha256": "1ee75f11f5aaa4f0b74dd9c8567110005d21201a61799e6162e1ba59a131731b",
+  "evidence": "BeyondTorque-Local-Artifacts/tracked-swing-plant-20261105-a",
+  "scope": "Normalization unit only (charge per meter times D): clean native 7S1P 4 Ah tracked-swing 320 m mission from 95% SOC; not a forecast or safety bound."
 }
