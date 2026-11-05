@@ -71,7 +71,8 @@ classdef testEnergyMissionObjective < matlab.unittest.TestCase
             w=struct('Ieq_window',4);
             [o,a]=build_energy_mission_observation(state,legacy,row,c,w);
             idx=a.schema.names=="previous_pack_current_1C";
-            tc.verifyEqual(o(idx),asinh(2),'AbsTol',1e-14);
+            oneC=c.BATTERY.n_parallel*c.BATTERY.C_nom_Ah;
+            tc.verifyEqual(o(idx),asinh(4/oneC),'AbsTol',1e-14);
             tc.verifyFalse(a.true_soc_exposed);
             changed=state; changed.energy.soc=.21; changed.energy.rc=ones(3,1)*99;
             row.state_after=changed;
@@ -83,7 +84,8 @@ classdef testEnergyMissionObjective < matlab.unittest.TestCase
             [~,a]=build_energy_mission_observation(state,legacy,row,c,struct('Ieq_window',.5));
             tc.verifyTrue(a.forecast_available);
             tc.verifyEqual(a.projected_remaining_charge_As,10/40*280);
-            tc.verifyEqual(a.projected_reserve_surplus_As,7200*(.94-.2)-70,'AbsTol',1e-10);
+            capacity=3600*c.BATTERY.n_parallel*c.BATTERY.C_nom_Ah;
+            tc.verifyEqual(a.projected_reserve_surplus_As,capacity*(.94-.2)-70,'AbsTol',1e-10);
         end
         function resetForecastAndElectricalMeasurementAvailabilityAreExplicit(tc)
             b=setup_RL_MPC(); c=b.cfg; f=fixtureConfig(); c.ENERGY_RL=f.ENERGY_RL;

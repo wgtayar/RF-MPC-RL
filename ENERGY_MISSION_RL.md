@@ -1,5 +1,7 @@
 # Energy-aware mission interface (2026-11-04)
 
+> **Plant revision 2026-11-05:** the energy-mission profile now uses the tracked swing model and the locked 7S1P Samsung 18650 4 Ah pack; see [TRACKED_SWING_18650_PACK.md](TRACKED_SWING_18650_PACK.md). The 20S1P/2 Ah figures below describe the 2026-11-04 interface and its archived evidence; the former reference is kept as `energy_mission_reference_20s1p_20261104.json`.
+
 New `setup_RL_MPC()` calls `setup_energy_mission_rl()`. The frozen 20S1P plant, 2 Ah cell, resolved electrical integration, actuator screening, and true-SOC floor remain unchanged. This is the diagnostic baseline, not an approved physical battery design. Historical diagnostic runners explicitly request `setup_RL_MPC('legacy_frozen_v1')`; saved legacy actors cannot be transplanted into the new interface.
 
 ## Consumption and objective

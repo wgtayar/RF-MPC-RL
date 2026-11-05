@@ -1,4 +1,8 @@
-function [FSMout,Xd,Ud,Xt,stateOut] = fcn_FSM(t_,Xt,p,stateIn)
+function [FSMout,Xd,Ud,Xt,stateOut,swingRef] = fcn_FSM(t_,Xt,p,stateIn)
+% swingRef (optional 6th output): the per-leg Bezier swing plan evaluated
+% here at t_(1). It lets dynamics_SRB track the plan continuously inside the
+% integration interval (swing model 'tracked_bezier_v1'); callers that do not
+% request it keep the historical held-target servo unchanged.
 
 %% parameters
 [L,W,d] = deal(p.L,p.W,p.d);
@@ -201,6 +205,8 @@ for i_leg = 1:4
 end
 
 % desired foot placement
+swingRef = struct('model','bezier5_swing_plan_v1','active',false(4,1), ...
+    'Ta',Ta,'Tb',Tb,'coefficients',zeros(3,6,4));
 if p.gait == -3     % backflip
     pfd = Xt(idx_pf);
     for i_leg = 1:2
@@ -227,6 +233,8 @@ else
             pfd(idx) = [polyval_bz(co_x,s(i_leg));
                         polyval_bz(co_y,s(i_leg));
                         polyval_bz(co_z,s(i_leg))];
+            swingRef.active(i_leg) = true;
+            swingRef.coefficients(:,:,i_leg) = [co_x;co_y;co_z];
         end
     end
     Xd(idx_pf,:) = repmat(pfd,[1,p.predHorizon]);

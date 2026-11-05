@@ -1,13 +1,13 @@
 {
-  "schema": "energy_mission_reference_v1",
-  "pack_id": "beyond_torque_20s1p_p95_20261103_v1",
-  "charge_As": 165.3495482964602,
-  "distance_m": 320.00394724021606,
-  "duration_s": 506.51999996476155,
-  "energy_Wh": 3.702233425116061,
+  "schema": "energy_mission_reference_v2",
+  "pack_id": "beyond_torque_7s1p_18650_4ah_20261105_v1",
+  "charge_As": 465.65680444555596,
+  "distance_m": 319.40912458749045,
+  "duration_s": 600.0,
+  "energy_Wh": 3.611950355528867,
   "initial_soc": 0.95,
-  "source_sha": "116afc63955e346149d85782de3a658083b43af8",
-  "resolved_input_sha256": "84130851c0eff21097b1bcb342d74d0025e69c28ce079219f7967ee6c3011a23",
-  "replay_report_sha256": "b7ce53e310e1322c096c8bd31afdc6eb9a783d054280bce48322da28a4aa33c8",
-  "scope": "Normalization reference only: one full governed-fast requested trajectory with offline physical battery replay; not measured hardware consumption or a forecast for a different mission."
+  "policy": "requested mission pace 0.5333 m/s (governor, min acceleration)",
+  "swing_model": "tracked_bezier_v1",
+  "status": "development_probe_dirty_source",
+  "scope": "Normalization unit only (charge per meter times D): native 7S1P 4 Ah tracked-swing mission at requested mission pace; not a forecast or safety bound. Superseded by the clean qualification value if it differs."
 }

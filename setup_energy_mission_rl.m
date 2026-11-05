@@ -20,6 +20,14 @@ validateattributes(options.time_weight,{'double'},{'scalar','real','finite','>='
 validateattributes(options.seed,{'double'},{'scalar','integer','nonnegative','<=',2^32-1});
 oldRng=rng; cleanup=onCleanup(@()rng(oldRng));
 bundle=setup_RL_MPC('legacy_frozen_v1'); c=bundle.cfg;
+% Plant revision 2026-11-05: swing feet track the continuous Bezier plan
+% (no held-target speed peaks) and the pack is the locked 18650 4 Ah design.
+c.SWING=struct('model','tracked_bezier_v1', ...
+ 'description','Swing feet follow the per-step Bezier plan with velocity feed-forward and Kp_sw correction inside each MPC interval.');
+minimumSoc=c.BATTERY.terminal_margin;
+c.BATTERY=phase3battery.fixedPackConfig(energy_mission_pack_file());
+c.BATTERY.terminal_margin=minimumSoc; c.ENERGY.minimum_soc=minimumSoc;
+c.EXPERIMENT.fixed_pack_id=c.BATTERY.fixed_pack_spec.id;
 c.BATTERY.SOC_init=options.initial_soc; c.BATTERY.metric_init=100*options.initial_soc;
 c.MISSION.D_TARGET_M=options.target_distance_m; c.MISSION_DURATION=options.mission_duration_s;
 % Keep established 5-second chunks, allowing a shorter explicitly requested
@@ -58,7 +66,7 @@ c.LEGACY_REWARD=c.REWARD;
 c.REWARD=struct('version','reward_energy_mission_v1', ...
  'description','Completion priority with undiscounted elapsed-time and committed pack-charge costs.');
 c.TRAIN.discount_factor=1;
-c.EXPERIMENT.id='energy_mission_fixed_20s1p_v1';
-c.EXPERIMENT.description='High-SOC fixed-pack mission, actual charge objective, captured supervisory interface; no trained-policy claim.';
+c.EXPERIMENT.id=['energy_mission_' c.BATTERY.fixed_pack_spec.id '_tracked_swing_v2'];
+c.EXPERIMENT.description='High-SOC locked 18650 pack, tracked swing, actual charge objective, captured supervisory interface; no trained-policy claim.';
 bundle.cfg=c;
 end

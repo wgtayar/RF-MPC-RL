@@ -15,6 +15,12 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
         reset_mpc_case_state();
     end
     p = get_params(state.gait);
+    trackedSwing = strcmp(swing_model_of(cfg),'tracked_bezier_v1');
+    assert(~trackedSwing || state.gait ~= 1, 'simulate_mpc_horizon:SwingModel', ...
+        'tracked_bezier_v1 is implemented for the fcn_FSM gaits, not the bound FSM.');
+    assert(~trackedSwing || isempty(fieldnames(options.initial_problem_override)), ...
+        'simulate_mpc_horizon:SwingModel', ...
+        'Problem overrides carry no swing plan; replay them with the historical swing model.');
     rWeights = control.R(:);
     if numel(rWeights) == 3
         rWeights = repmat(rWeights, 4, 1);
@@ -103,9 +109,12 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
                     fcn_FSM_bound(timeHorizon, state.Xt, p, ...
                     state.fsm_internal_state);
             else
-                [FSM, Xd, Ud, state.Xt, state.fsm_internal_state] = ...
+                [FSM, Xd, Ud, state.Xt, state.fsm_internal_state, swingRef] = ...
                     fcn_FSM(timeHorizon, state.Xt, p, ...
                     state.fsm_internal_state);
+                if trackedSwing
+                    p.swing_reference = swingRef;
+                end
             end
             Xd(1,:) = Xd(1,:)+referenceOffset;
             [H, g, Aineq, bineq, Aeq, beq] = ...
