@@ -119,3 +119,20 @@ via the shared `attitude_telemetry` helper that the dataset reconstruction
 also uses. It is NOT an observation input and there is no tilt termination:
 the graded tilt penalty and any fall-ending rule belong to the RL design phase.
 Archived configurations (no `cfg.STABILITY`) are unchanged.
+
+### Clean 9S qualification (source 3cfda1c, 95% start, drive limits enforced, speed commanded directly)
+
+| Command | Result | QP failed | SOC end | Drive energy | J/m | Peak V | Max tilt |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 0.6 m/s, 320 m | 534.05 s | 0 | 89.51% | 3.932 Wh | 44.2 | 25.30 | 0.023 rad |
+| 0.8 m/s, 320 m | 400.94 s | 0 | 89.32% | 4.039 Wh | 45.4 | 31.43 | 0.034 rad |
+| 1.0 m/s, 320 m | 321.23 s | 0 | 88.49% | 4.568 Wh | 51.4 | 33.23 | 0.091 rad |
+| 1.1 m/s, 60 s hold | complete | 0 | - | - | 50.2 | 34.75 | 0.127 rad |
+| 1.2 m/s, 60 s hold | actuator voltage limit at 4.31 s | 0 | - | - | - | 36.25 | 0.201 rad |
+
+No voltage or torque limit interval occurs in the completed cases. Replays on
+9S pass every tested speed from 50% upward; at 1.0 m/s the headroom reaches
+zero near 21% SOC; a 25% start reaches the 20% floor before 320 m (each
+320 m uses about 5.5-6.5 SOC points). The reference normalization is the
+0.8 m/s mission. The 0.34 time weight was calibrated on the former 7S/0.66 m/s
+plant and is stale until the RL design phase.
