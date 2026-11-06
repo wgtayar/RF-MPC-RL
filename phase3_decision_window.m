@@ -39,6 +39,9 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
         window.Ieq_window = charge/duration;
     end
     window.charge_As = charge;
+    if ~isempty(chunks) && all(cellfun(@(out) isfield(out,'attitude'),chunks))
+        window.attitude = localAttitude(chunks);
+    end
     if isfield(after.battery,'energy_Wh')
         window.energy_Wh=after.battery.energy_Wh-before.battery.energy_Wh;
     end
@@ -85,4 +88,27 @@ function window = phase3_decision_window(before, after, chunks, control, cfg, te
     window.recovered_solver_events = sum(cellfun(@(out) ...
         nnz(out.trace.solver_classification == "numerical_solver_failure_recovered"),chunks));
     window.qp_solve_count = sum(cellfun(@(out) out.qp_solve_count,chunks));
+end
+
+function attitude = localAttitude(chunks)
+% Whole-window body attitude from every integrated MPC step of every chunk.
+    attitude = struct('available',false,'integrated_steps',0,'max_tilt_rad',NaN, ...
+        'rms_tilt_rad',NaN,'max_body_rate_rad_s',NaN,'tilt_exceedance_fraction',NaN, ...
+        'tilt_threshold_rad',NaN,'rms_tilt_excess_rad',NaN);
+    has = cellfun(@(out) isfield(out,'attitude'),chunks);
+    if isempty(chunks) || ~all(has), return, end
+    a = cellfun(@(out) out.attitude,chunks,'UniformOutput',false); a = [a{:}];
+    steps = sum([a.integrated_steps]);
+    thresholds = unique([a.tilt_threshold_rad]);
+    assert(numel(thresholds)==1,'phase3window:AttitudeThreshold', ...
+        'Chunks of one decision must share the tilt threshold.');
+    attitude.tilt_threshold_rad = thresholds;
+    attitude.integrated_steps = steps;
+    if steps==0, return, end
+    attitude.available = true;
+    attitude.max_tilt_rad = max([a.max_tilt_rad]);
+    attitude.rms_tilt_rad = sqrt(sum([a.tilt_square_sum])/steps);
+    attitude.max_body_rate_rad_s = max([a.max_body_rate_rad_s]);
+    attitude.tilt_exceedance_fraction = sum([a.tilt_exceedance_steps])/steps;
+    attitude.rms_tilt_excess_rad = sqrt(sum([a.tilt_excess_square_sum])/steps);
 end

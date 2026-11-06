@@ -1,12 +1,12 @@
 {
   "schema": "frozen_simulation_pack_v2",
-  "id": "beyond_torque_7s1p_18650_nancy_2ah_20261106_v1",
-  "n_series": 7,
+  "id": "beyond_torque_9s1p_18650_nancy_2ah_20261106_v1",
+  "n_series": 9,
   "n_parallel": 1,
   "cell_capacity_Ah": 2,
   "pack_capacity_Ah": 2,
-  "reported_nominal_voltage_V": 25.9,
-  "required_full_charge_bus_capability_V": 29.2712,
+  "reported_nominal_voltage_V": 33.3,
+  "required_full_charge_bus_capability_V": 37.6344,
   "cell_model_sha256": "18ec7700b630f1d355b22eebabfc4ff45779efdd25382b5d244ca8d66f1ee975",
   "cell_identity": "Samsung-labelled 18650 ICR \"4000 mAh\" 3.7 V cell as tested by the BMS team; electrical model and capacity from Nancy Zayour and Nagham El Ghossein pulse characterization (investigator instruction 2026-11-06; relabelling accepted).",
   "cell_capacity_source": "Nancy manuscript (References/battery-manuscript.tex): 2 Ah nominal; 0.5C 6-minute pulses each remove 5% SOC from 100% to 5% with OCV reaching 3.03 V, i.e. about 1.9 Ah measured to 5%, consistent with 2 Ah rather than the 4000 mAh label.",
@@ -16,14 +16,6 @@
   "physical_hardware_qualified": false,
   "runtime_or_episode_sizing": false,
   "selection_status": "locked",
-  "sizing_criterion": "Series count 7 retained at the 0.66 m/s command cap: interval-level replay of the clean full 320 m tracked-swing mission at requested 0.58 m/s with the 2 Ah cell passes from 30%, 95% and 100% (minimum headroom 1.97/3.76/3.93 V; voltage feasible to the 20% floor) while 6S fails from every start. Full-speed (0.66 m/s) requests need ~30 V and are voltage-limited on 7S.",
-  "selection_evidence": "Clean native trace BeyondTorque-Local-Artifacts/tracked-swing-plant-20261105-a (source f882feb, 4 Ah run; current and voltage are capacity-independent at equal SOC) replayed with the 2 Ah cell; native 2 Ah requalification pending.",
-  "speed_voltage_map_V": {
-    "0.545": 22.42,
-    "0.581": 23.97,
-    "0.605": 25.54,
-    "0.629": 27.28,
-    "0.653": 29.08,
-    "0.660": 29.88
-  }
+  "sizing_criterion": "Investigator decision 2026-11-06 (9S1P) for the 1.2 m/s command envelope, by an outcome-independent rule: smallest series count of Nancy 2 Ah cell (1P) that sustains the efficient trot 0.8-1.0 m/s at every operating SOC. Development 60 s holds replayed on 2 Ah cells: 1.0 m/s passes on 9S from 25%/50%/95% (+0.29/+1.13/+2.73 V) and fails on 8S at 95%; 1.1 m/s passes on 9S only at high SOC (+1.14 V at 95%, -0.01 V at 50%); 1.2 m/s diverges on any pack. 8S1P is the planned ablation.",
+  "selection_evidence": "Development probes BeyondTorque-Local-Artifacts/speed-ladder-development-20261106-a (ladder and 60 s holds); clean native qualification recorded in RL-MPC-Monitor/runs/tracked-swing-18650-20261105-a."
 }

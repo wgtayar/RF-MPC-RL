@@ -26,13 +26,25 @@ validateattributes(options.seed,{'double'},{'scalar','integer','nonnegative','<=
 oldRng=rng; cleanup=onCleanup(@()rng(oldRng));
 bundle=setup_RL_MPC('legacy_frozen_v1'); c=bundle.cfg;
 % Plant revision 2026-11-05: swing feet track the continuous Bezier plan
-% (no held-target speed peaks) and the pack is the locked 7S1P 18650 pack with Nancy 2 Ah cell parameters.
+% (no held-target speed peaks) and the pack is the locked 9S1P 18650 pack with Nancy 2 Ah cell parameters.
 c.SWING=struct('model','tracked_bezier_v1', ...
  'description','Swing feet follow the per-step Bezier plan with velocity feed-forward and Kp_sw correction inside each MPC interval.');
 minimumSoc=c.BATTERY.terminal_margin;
 c.BATTERY=phase3battery.fixedPackConfig(energy_mission_pack_file());
 c.BATTERY.terminal_margin=minimumSoc; c.ENERGY.minimum_soc=minimumSoc;
 c.EXPERIMENT.fixed_pack_id=c.BATTERY.fixed_pack_spec.id;
+% Speed envelope 2026-11-06 (investigator): command cap 1.2 m/s. The
+% 2026-11-06 development holds are QP-feasible to 1.2 m/s (0 failures); 1.0 and
+% 1.1 m/s hold 60 s with tilt <= 0.093 rad, while 1.2 m/s diverges after ~11 s.
+% The former 0.66 m/s cap (GAMMA_V_MAX 0.45 of 0.3-1.1) is retired here. The
+% governor keeps its physical rate, 0.024 m/s per decision.
+c.V_MAX=1.2; c.GAMMA_V_MAX=1; c.DGAMMA_V_MAX=.024/(c.V_MAX-c.V_MIN);
+% Attitude telemetry (simulate_mpc_horizon out.attitude, window.attitude):
+% logged for the RL design phase, NOT an observation input. The exceedance
+% threshold sits above every stable steady hold (<= 0.093 rad, transient
+% 0.19 rad) and below the diverging 1.2 m/s run (0.25-0.33 rad).
+c.STABILITY=struct('tilt_threshold_rad',.25, ...
+ 'scope','Telemetry exceedance threshold only; not an observation feature and no tilt termination is configured.');
 c.BATTERY.SOC_init=options.initial_soc; c.BATTERY.metric_init=100*options.initial_soc;
 c.MISSION.D_TARGET_M=options.target_distance_m; c.MISSION_DURATION=options.mission_duration_s;
 % Keep established 5-second chunks, allowing a shorter explicitly requested

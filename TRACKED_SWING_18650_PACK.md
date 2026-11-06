@@ -55,7 +55,7 @@ label. The `our params.xlsx` OCV/3RC table and 2 Ah capacity are used exactly
 as identified, without rescaling. (Specification revision of 2026-11-05 used
 4 Ah with the same table; superseded.)
 
-Specification: `+phase3battery/pack_18650_nancy_2ah_specification.json`,
+Specification (locked 9S1P, 2026-11-06): `+phase3battery/pack_9s1p_18650_nancy_2ah_specification.json`,
 loaded by `phase3battery.fixedPackConfig(energy_mission_pack_file())`.
 Electronics/auxiliary load stays zero and the inverter ideal, by investigator
 decision (research control study first).
@@ -90,3 +90,32 @@ is 0.34. Winner by weight: 0.45 m/s below ~0.26, 0.50 m/s to ~0.39, 0.55 m/s
 to ~0.51, fastest above. On the full 320 m / 600 s mission the deadline
 already excludes requests below about 0.54 m/s, and 7S excludes the fastest
 requests, so the learned policy must trade within that SOC-dependent band.
+
+## Plant revision 2026-11-06: 9S1P, 1.2 m/s envelope, attitude telemetry
+
+The investigator raised the command envelope to 1.2 m/s (`V_MAX = 1.2`,
+`GAMMA_V_MAX = 1`; governor rate kept at 0.024 m/s per decision). The old
+0.66 m/s cap was historical: it kept the robot under the 0.667 m/s point where
+stance time `min(0.3, 0.2/v)` shortens, and was set for "stability recovery"
+against failures later traced to the position-reference jump.
+
+Development probes (12 s ladder and 60 s holds, drive limits off, governor
+bypassed): no QP failed at any speed up to 1.35 m/s. 1.0 and 1.1 m/s hold
+60 s with tilt <= 0.093 rad; 1.2 m/s diverges (tilt 0.25-0.33 rad, body drops
+to 0.161 m) and ends on the battery power limit after ~11 s. Energy per meter
+is lowest near 0.8 m/s (45.6 J/m) and rises to about 51 J/m at 1.0-1.1 m/s.
+
+Pack: 9S1P with Nancy's 2 Ah cell (33.3 V nominal, 37.63 V full), chosen by an
+outcome-independent rule: the smallest series count that sustains the
+efficient trot (0.8-1.0 m/s) at every operating SOC. 1.0 m/s replays on 9S
+pass from 25/50/95% (+0.29/+1.13/+2.73 V); 1.1 m/s passes only at high SOC; 8S
+fails 1.0 m/s even at 95%. 8S1P is the planned ablation.
+
+Attitude telemetry: with `cfg.STABILITY` set, every integrated MPC step logs
+body tilt (angle between body z and world z) and body-rate norm;
+`out.attitude` and `window.attitude` carry peak/RMS tilt, peak rate,
+exceedance of the 0.25 rad bad-tilt threshold and the RMS excess above it,
+via the shared `attitude_telemetry` helper that the dataset reconstruction
+also uses. It is NOT an observation input and there is no tilt termination:
+the graded tilt penalty and any fall-ending rule belong to the RL design phase.
+Archived configurations (no `cfg.STABILITY`) are unchanged.

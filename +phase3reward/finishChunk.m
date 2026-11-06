@@ -17,6 +17,9 @@ function chunk = finishChunk(a,after)
         'fsm_end',a.last_FSM,'stance_duration_end_s',a.last_stance, ...
         'charge_As',localCharge(after)-localCharge(a.before), ...
         'trace',struct('solver_classification',repmat("numerical_solver_failure_recovered",a.recovered_events,1)));
+    if isfield(a,'attitude') && ~isempty(a.attitude)
+        out.attitude = attitude_telemetry('summary',a.attitude);
+    end
     chunk = struct('before',a.before,'after',after,'control',a.control,'out',out,'context',a.context);
 end
 

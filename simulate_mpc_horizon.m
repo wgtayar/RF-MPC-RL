@@ -64,6 +64,9 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     trackingErrorSum = 0;
     controlEffortSum = 0;
     integratedSteps = 0;
+    % Body attitude telemetry over every integrated MPC step (logged only).
+    tiltThreshold = attitude_telemetry('threshold',cfg);
+    if ~isempty(tiltThreshold), attitude = attitude_telemetry('start',tiltThreshold); end
     driveRows = zeros(0,53); driveInputs=zeros(0,114);
     if options.capture_drive_trace
         driveRows=zeros(numberSteps,53); driveInputs=zeros(numberSteps,114);
@@ -284,6 +287,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
             state.current_time(end+1, 1) = time;
             state.current_total(end+1, 1) = kneeCurrent;
         end
+        if ~isempty(tiltThreshold), attitude = attitude_telemetry('step',attitude,state.Xt); end
         trackingErrorSum = trackingErrorSum + sum((state.Xt-Xd(:,1)).^2);
         controlEffortSum = controlEffortSum + sum(state.Ut.^2);
         integratedSteps = integratedSteps+1;
@@ -341,6 +345,7 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     out.qp_failed_count = failedSolveCount;
     out.integrated_steps = integratedSteps;
     out.tracking_error_sum = trackingErrorSum;
+    if ~isempty(tiltThreshold), out.attitude = attitude_telemetry('summary',attitude); end
     out.control_effort_sum = controlEffortSum;
     out.fsm_end = lastFsm;
     out.stance_duration_end_s = lastStanceDuration;
