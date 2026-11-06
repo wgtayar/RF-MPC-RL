@@ -1,7 +1,7 @@
 function bundle = setup_energy_mission_rl(options)
 %SETUP_ENERGY_MISSION_RL Explicit mission/charge objective on the fixed plant.
-% Baseline pack is retained pending physical-design review. No load scaling,
-% cell resizing, fictitious auxiliary demand, or SOC reset within a mission.
+% Locked plant: tracked swing, 9S1P Nancy 2 Ah pack, declared electronics and
+% driver losses. No load scaling, cell resizing, or SOC reset within a mission.
 if nargin<1, options=struct(); end
 assert(isstruct(options) && isscalar(options),'energyMission:Options','Options must be a scalar struct.');
 defaults=struct('initial_soc',.95,'target_distance_m',320,'mission_duration_s',600, ...
@@ -33,6 +33,17 @@ minimumSoc=c.BATTERY.terminal_margin;
 c.BATTERY=phase3battery.fixedPackConfig(energy_mission_pack_file());
 c.BATTERY.terminal_margin=minimumSoc; c.ENERGY.minimum_soc=minimumSoc;
 c.EXPERIMENT.fixed_pack_id=c.BATTERY.fixed_pack_spec.id;
+% Declared non-drive losses (investigator decision 2026-11-06), drawn from the
+% pack bus: constant electronics load and motor-driver (inverter) efficiency.
+% Legs stay massless as in the RF-MPC single-rigid-body model; swing-leg
+% inertial energy enters only through the knee swing-torque template.
+c.ENERGY.auxW=15; c.ENERGY.inverterEfficiency=.90;
+c.ENERGY.loss_declaration=struct('version','declared_bus_losses_v1', ...
+ 'electronics_W',15,'electronics_basis', ...
+ 'Declared budget: embedded computer ~8-10 W, 12 motor-driver boards logic/idle ~5 W, IMU/encoders/comms ~1 W; replace with measured hardware draw.', ...
+ 'inverter_efficiency',.90,'inverter_basis', ...
+ 'Declared central value for small FOC BLDC drivers at partial load (typically 0.85-0.95), applied to positive per-motor electrical power.', ...
+ 'regeneration','none','leg_mass','massless links (RF-MPC single rigid body)');
 % Speed envelope 2026-11-06 (investigator): command cap 1.2 m/s. The
 % 2026-11-06 development holds are QP-feasible to 1.2 m/s (0 failures); 1.0 and
 % 1.1 m/s hold 60 s with tilt <= 0.093 rad, while 1.2 m/s diverges after ~11 s.

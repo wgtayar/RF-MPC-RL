@@ -136,3 +136,18 @@ zero near 21% SOC; a 25% start reaches the 20% floor before 320 m (each
 320 m uses about 5.5-6.5 SOC points). The reference normalization is the
 0.8 m/s mission. The 0.34 time weight was calibrated on the former 7S/0.66 m/s
 plant and is stale until the RL design phase.
+
+## Declared bus losses (2026-11-06)
+
+Investigator decision: the energy mission draws a constant **15 W electronics
+load** from the pack bus (embedded computer ~8-10 W, 12 motor-driver boards
+logic/idle ~5 W, IMU/encoders/comms ~1 W) and applies **90% motor-driver
+efficiency** to positive per-motor electrical power:
+
+`P_bus = 15 W + sum_j max(0, tau_m,j * omega_m,j + 0.75 R i_j^2) / 0.90`
+
+(`cfg.ENERGY.auxW`, `cfg.ENERGY.inverterEfficiency`, recorded in
+`cfg.ENERGY.loss_declaration`). No regeneration. Legs remain massless, as in
+the RF-MPC single-rigid-body model; swing-leg inertial energy enters only
+through the knee swing-torque template. These are declared estimates to be
+replaced by measured hardware draw. The MPC dynamics are unchanged.
