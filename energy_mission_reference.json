@@ -1,7 +1,7 @@
 {
   "schema": "energy_mission_reference_v2",
-  "pack_id": "beyond_torque_7s1p_18650_4ah_20261105_v1",
-  "charge_As": 493.48167870391,
+  "pack_id": "beyond_torque_7s1p_18650_nancy_2ah_20261106_v1",
+  "charge_As": 494.8044481351,
   "distance_m": 320.00124103413737,
   "duration_s": 554.75,
   "energy_Wh": 3.815388970668142,
@@ -13,5 +13,6 @@
   "result_sha256": "2cb6cceaafc9da601ab9d0d9949a491b86d45b9a90f9b597a2fe85d91bb674f4",
   "drive_trace_sha256": "1ee75f11f5aaa4f0b74dd9c8567110005d21201a61799e6162e1ba59a131731b",
   "evidence": "BeyondTorque-Local-Artifacts/tracked-swing-plant-20261105-a",
-  "scope": "Normalization unit only (charge per meter times D): clean native 7S1P 4 Ah tracked-swing 320 m mission from 95% SOC; not a forecast or safety bound."
+  "scope": "Normalization unit only: charge of the clean native 320 m tracked-swing mission (f882feb, 95% start, requested 0.58 m/s) replayed with Nancy 2 Ah cell (4 Ah native value 493.48 As); not a forecast or safety bound.",
+  "status": "interval_level_replay_of_clean_native_trace_on_2Ah_cell"
 }

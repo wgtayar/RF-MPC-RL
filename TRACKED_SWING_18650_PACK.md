@@ -46,20 +46,24 @@ Tests: `tests/testTrackedSwing.m`.
 
 ## Pack
 
-Cell: Samsung 18650 ICR, 4000 mAh, 3.7 V nominal, as tested by the BMS team
-(investigator instruction 2026-11-05). The electrical table is the existing
-team-characterized `our params.xlsx` (OCV 3.03-4.18 V over 5-100% SOC,
-consistent with an ICR/NMC-type cell), unchanged and hash-locked. Only the
-capacity changes to 4 Ah. Resistances are NOT rescaled for the larger
-capacity: if the table came from a smaller cell this overstates sag, which is
-conservative for voltage sizing. Replace the table with BMS-team measurements
-of the 4 Ah cell when available and qualify a new specification.
+Cell: the BMS team's Samsung-labelled 18650 ICR "4000 mAh" 3.7 V cell, modeled
+with Nancy Zayour and Nagham El Ghossein's pulse characterization (investigator
+instruction 2026-11-06; relabelling accepted). Her test applied 0.5C pulses of
+6 minutes, each removing 5% SOC, from 100% down to 5%, with OCV reaching 3.03 V:
+about 1.9 Ah to 5%, consistent with her stated 2 Ah capacity rather than the
+label. The `our params.xlsx` OCV/3RC table and 2 Ah capacity are used exactly
+as identified, without rescaling. (Specification revision of 2026-11-05 used
+4 Ah with the same table; superseded.)
 
-Specification: `+phase3battery/pack_18650_4ah_specification.json`, loaded by
-`phase3battery.fixedPackConfig(energy_mission_pack_file())`. Series count,
-selection rule and evidence are recorded in the specification and in the
-monitor run report. Electronics/auxiliary load stays zero and the inverter
-ideal, by investigator decision (research control study first).
+Specification: `+phase3battery/pack_18650_nancy_2ah_specification.json`,
+loaded by `phase3battery.fixedPackConfig(energy_mission_pack_file())`.
+Electronics/auxiliary load stays zero and the inverter ideal, by investigator
+decision (research control study first).
+
+With 2 Ah, the clean 0.58 m/s mission trace replays to 95% -> 88.13% SOC
+(494.80 As); 7S passes from 30/95/100% (1.97/3.76/3.93 V) and stays
+voltage-feasible to the 20% floor, while a 25% start reaches the floor
+before 320 m. 6S fails from every start.
 
 ## Measured plant (clean source f882feb)
 
@@ -73,8 +77,8 @@ peaks at 29.88 V (fails on 7S at every start, so the usable speed ceiling falls
 with SOC); requested mission pace peaks at 20.98 V. Required voltage rises
 with walking speed (22.4 V at 0.545 m/s to 29.9 V at 0.66 m/s).
 
-`energy_mission_reference.json` is this clean mission (charge per meter is the
-reward normalization unit).
+`energy_mission_reference.json` is this clean mission replayed with the 2 Ah
+cell (charge per meter is the reward normalization unit).
 
 ## Time/charge preference
 

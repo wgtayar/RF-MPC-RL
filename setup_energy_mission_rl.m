@@ -26,7 +26,7 @@ validateattributes(options.seed,{'double'},{'scalar','integer','nonnegative','<=
 oldRng=rng; cleanup=onCleanup(@()rng(oldRng));
 bundle=setup_RL_MPC('legacy_frozen_v1'); c=bundle.cfg;
 % Plant revision 2026-11-05: swing feet track the continuous Bezier plan
-% (no held-target speed peaks) and the pack is the locked 18650 4 Ah design.
+% (no held-target speed peaks) and the pack is the locked 7S1P 18650 pack with Nancy 2 Ah cell parameters.
 c.SWING=struct('model','tracked_bezier_v1', ...
  'description','Swing feet follow the per-step Bezier plan with velocity feed-forward and Kp_sw correction inside each MPC interval.');
 minimumSoc=c.BATTERY.terminal_margin;
