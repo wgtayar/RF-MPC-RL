@@ -51,7 +51,7 @@ if strcmp(options.command_mode, 'direct')
     directControl = resolve_replay_action([zeros(3,1); c.GAMMA_V_MISSION; c.GAMMA_A_MAX], ...
         s, c, b.lower_abs, b.upper_abs);
     directControl.v_cmd = options.requested_speed_m_s;
-    directControl.reference_mode = 'position_continuous_v1';
+    directControl.reference_mode = configured_reference_mode(c);
 end
 drive = zeros(round(duration/.01), 53); n = 0; solves = 0; failed = 0;
 terminal = 'time_limit'; started = tic;
@@ -62,7 +62,7 @@ try
         elseif mod(round(s.t*100), round(c.CHUNK_DURATION*c.APPLY_EVERY*100)) == 0
             control = resolve_replay_action([zeros(3,1); gammaV; c.GAMMA_A_MIN], ...
                 s, c, b.lower_abs, b.upper_abs);
-            control.reference_mode = 'position_continuous_v1';
+            control.reference_mode = configured_reference_mode(c);
         end
         o = struct('duration_s', min(c.CHUNK_DURATION, duration - s.t), ...
             'capture_trace', false, 'capture_drive_trace', true, 'update_proxy', false, ...

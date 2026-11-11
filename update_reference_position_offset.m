@@ -10,6 +10,9 @@ function [reference, offset] = update_reference_position_offset(state, control)
     validateattributes(control.a_cmd,{'numeric'},{'scalar','finite','positive'});
     offset = 0;
     switch mode
+        case 'velocity_continuous_v2'
+            reference = update_velocity_reference(state,control);
+            return
         case 'legacy_absolute_time'
             % No offset in the inherited reference convention.
         case 'position_continuous_v1'

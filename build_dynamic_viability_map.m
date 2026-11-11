@@ -105,7 +105,7 @@ function result = build_dynamic_viability_map(baseStates, baseMetadata, samples,
         string(datetime('now', 'TimeZone', 'local')), ...
         'rng_seed', cfg.RNG_SEED, 'horizon_seconds', horizonSeconds, ...
         'reward_version', string(cfg.REWARD.version));
-    provenance.action_schema_version = "action_v2_rate_limited";
+    provenance.action_schema_version = string(supervisory_action_schema(cfg));
     provenance.viability_schema_version = "viability_v2_whole_horizon";
     provenance.thresholds_validated = false;
     writetable(map, fullfile(outputFolder, 'dynamic_viability_samples.csv'));

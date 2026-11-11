@@ -106,8 +106,11 @@ function out = run_MPC_simulation(R_weights, gait, v_cmd, a_cmd, cfg, diagnostic
             [cfg.BATTERY.n_series cfg.BATTERY.n_parallel cfg.BATTERY.C_nom_Ah]),'robotenergy:FixedPack','Pack changed.');
         charge0=Sim.energy.chargeAs; elapsed0=Sim.energy.elapsed;
         [Sim.reference_state,offset]=update_reference_position_offset(Sim,struct( ...
-            'v_cmd',v_cmd,'a_cmd',a_cmd,'reference_mode','position_continuous_v1'));
+            'v_cmd',v_cmd,'a_cmd',a_cmd,'reference_mode',configured_reference_mode(cfg)));
         p.reference_position_offset_m=offset;
+        if strcmp(Sim.reference_state.mode,'velocity_continuous_v2')
+            p.velocity_reference=Sim.reference_state;
+        end
         logRows=nan(max_iter,7);
     end
     resolved=physical && robotenergy.usesResolved(cfg.ENERGY);

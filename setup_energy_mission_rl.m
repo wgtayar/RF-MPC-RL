@@ -55,6 +55,13 @@ c.ENERGY.loss_declaration=struct('version','declared_bus_losses_v1', ...
 % The former 0.66 m/s cap (GAMMA_V_MAX 0.45 of 0.3-1.1) is retired here. The
 % governor keeps its per-decision increment, 0.024 m/s (not acceleration).
 c.V_MAX=1.2; c.GAMMA_V_MAX=1; c.DGAMMA_V_MAX=.024/(c.V_MAX-c.V_MIN);
+% Desired position and velocity stay continuous across every command change.
+% Reuse the inherited effective acceleration range [0.2, 0.5] m/s^2.
+% The old startup v/a time clamp is not a transition-acceleration model.
+c.REFERENCE=struct('mode','velocity_continuous_v2', ...
+ 'scope','Stateful desired position/velocity; acceleration magnitude controls each up/down ramp, not a physical acceleration/current bound.');
+c.ACCELERATION=struct('action_model','bounded_transition_v1', ...
+ 'bounds_basis','[max(A_MIN,a_req*GAMMA_A_MIN), min(A_MAX,a_req*GAMMA_A_MAX)]; affine gamma mapping, independent of target speed.');
 % Attitude telemetry (simulate_mpc_horizon out.attitude, window.attitude):
 % logged for the RL design phase, NOT an observation input. The exceedance
 % threshold sits above every stable steady hold (<= 0.093 rad, transient
@@ -99,7 +106,7 @@ c.LEGACY_REWARD=c.REWARD;
 c.REWARD=struct('version','reward_energy_mission_v1', ...
  'description','Completion priority with undiscounted elapsed-time and committed pack-charge costs.');
 c.TRAIN.discount_factor=1;
-c.EXPERIMENT.id=['energy_mission_' c.BATTERY.fixed_pack_spec.id '_tracked_swing_timing_v3'];
+c.EXPERIMENT.id=['energy_mission_' c.BATTERY.fixed_pack_spec.id '_continuous_transition_v4'];
 c.EXPERIMENT.description='High-SOC locked 18650 pack, tracked swing, actual charge objective, captured supervisory interface; no trained-policy claim.';
 bundle.cfg=c;
 end

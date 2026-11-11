@@ -51,7 +51,7 @@ classdef ExactStateDataset < handle
             manifest = metadata;
             manifest.dataset_schema_version = 'dynamic_state_v2';
             manifest.snapshot_schema_version = 'state_snapshot_v2_exact';
-            manifest.action_schema_version = 'action_v2_rate_limited';
+            manifest.action_schema_version = supervisory_action_schema(cfg);
             manifest.timestamp_utc = char(datetime('now','TimeZone','UTC', ...
                 'Format', 'yyyy-MM-dd''T''HH:mm:ssXXX'));
             manifest.source_branch = localGit(source, 'branch --show-current');

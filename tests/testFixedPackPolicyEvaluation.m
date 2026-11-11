@@ -11,7 +11,7 @@ classdef testFixedPackPolicyEvaluation < matlab.unittest.TestCase
             tc.verifyEqual(rng,before);
             tc.verifyFalse(isfile(worker));
             tc.verifyEqual(result.configuration_origin,'fresh_setup');
-            tc.verifyEqual(result.options.reference_mode,'position_continuous_v1');
+            tc.verifyEqual(result.options.reference_mode,'velocity_continuous_v2');
             tc.verifyEqual(result.options.solver_strategy,'default_one_shot_fallback_tight_primal_v1');
             tc.verifyEqual(result.options.mission_end_mode,'mpc_step_target_v1');
             tc.verifyTrue(result.checkpoint_unchanged);

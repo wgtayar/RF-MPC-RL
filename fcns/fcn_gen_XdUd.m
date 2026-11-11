@@ -13,13 +13,20 @@ lent = length(t);
 Xd = zeros(30,lent);
 Ud = zeros(12,lent);
 Rground = p.Rground;           % ground slope
+trackedVelocity = isfield(p,'velocity_reference');
+if trackedVelocity
+    [referenceX,referenceV] = evaluate_velocity_reference(p.velocity_reference,t);
+end
 for ii = 1:lent
     if gait >= 0        % --- March forward and rotate ---
         %%%%%%%%%% linear motion %%%%%%%%%%%%%
         pc_d = [0;0;p.z0];
         dpc_d = [0;0;0];
         for jj = 1:2
-            if t(ii) < (vel_d(jj) / acc_d)
+            if jj==1 && trackedVelocity
+                pc_d(jj) = referenceX(ii);
+                dpc_d(jj) = referenceV(ii);
+            elseif t(ii) < (vel_d(jj) / acc_d)
                 dpc_d(jj) = acc_d * t(ii);
                 pc_d(jj) = 1/2 * acc_d * t(ii)^2;
             else

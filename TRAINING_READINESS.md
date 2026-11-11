@@ -43,13 +43,15 @@ A successful three-decision probe supports the changed interface over that short
 
 ## Remaining gates before a meaningful pilot training run
 
-### A. Resolve acceleration-action semantics
+### A. Transition acceleration (implemented; bounded qualification required)
 
-The current governor computes an acceleration command, but `fcns/fcn_gen_XdUd.m` applies it against absolute simulation time. With the current governor, `v_cmd/a_cmd <= 2 s`; after startup the desired velocity switches directly to the newly requested speed. The position-continuity adapter preserves desired position but does not ramp desired velocity.
+Fresh energy-mission configurations select `velocity_continuous_v2`: every new speed command starts from the preceding desired position and velocity, ramps with the selected positive acceleration magnitude (negative sign when slowing down), and then cruises. Repeated commands retain the exact saved reference segment, so ordinary chunk boundaries do not restart the ramp. The reference is saved with the physical state for replay. Historical configurations keep their historical mapping and reference mode.
 
-Consequently, after startup, changing `gamma_a` alone has no effective influence on the reference: the acceleration-dependent position constant is canceled by the continuity offset. The fifth action must not be described as controlling subsequent speed-transition acceleration.
+The new `bounded_transition_v1` governor maps the acceleration coordinate across the existing 0.2–0.5 m/s² range independently of target speed. The old startup-time clamp collapsed acceleration authority at speeds of 1.0 m/s and above. This is a desired-reference acceleration, not a physical acceleration or current limit. The action semantics are versioned `action_v3_transition_acceleration`; there remain five action coordinates and 87 observation features.
 
-Choose and record a coherent action contract before substantive training: either make acceleration meaningful through a stateful, continuous reference trajectory, or explicitly remove/fix the ineffective action for the active study. Changing reference dynamics requires its own tests, replay-state treatment, and native transition qualification; changing action dimensions requires a new agent/action schema. Preserve the historical implementation for reproduction.
+At the default maximum speed increment of 0.024 m/s, these ramps last 0.048–0.12 s. Both finish before the next five-second decision; acceleration-only changes during cruise correctly have no motion effect. Shorter decision periods that permit mid-ramp decisions require an observation-state sufficiency review. Do not infer a useful learning signal or monotonic energy saving from the existence of the control path.
+
+Qualification requires analytical continuity/retargeting tests, historical compatibility checks, and matched native up/down transitions from exactly the same post-startup state, with charge/SOC reconciliation and repeat replay. The runner is `run_transition_acceleration_qualification`; results belong in a separate dated record. See [the transition and action contract](CONTINUOUS_TRANSITIONS.md) for equations, consumption coupling, R, and prospective additional controls.
 
 ### B. Define reproducible SOC coverage
 

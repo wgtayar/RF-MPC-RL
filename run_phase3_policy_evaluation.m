@@ -27,7 +27,7 @@ function report = run_phase3_policy_evaluation(policyId, outputRoot, options)
         bundle = setup_RL_MPC();
         configurationOrigin = 'fresh_setup';
     end
-    options = localOptions(options,~savedBundle && isfield(bundle.cfg,'ENERGY'));
+    options = localOptions(options,~savedBundle && isfield(bundle.cfg,'ENERGY'),bundle.cfg);
     options.configuration_mode=configurationMode;
     bundle.cfg.RNG_SEED = options.seed;
     bundle.cfg.POLICY_EVALUATION = struct('policy_id',char(policyId),'options',options, ...
@@ -111,11 +111,11 @@ function report = localEvaluate(env,policy,bundle,options,runId)
     close(env,status);
 end
 
-function options = localOptions(options,freshFixedPack)
+function options = localOptions(options,freshFixedPack,cfg)
     defaults = struct('reference_mode','legacy_absolute_time','solver_strategy','default', ...
         'max_decisions',inf,'seed',20260903);
     if freshFixedPack
-        defaults.reference_mode = 'position_continuous_v1';
+        defaults.reference_mode = configured_reference_mode(cfg);
         defaults.solver_strategy = 'default_one_shot_fallback_tight_primal_v1';
         defaults.mission_end_mode = 'mpc_step_target_v1';
     end

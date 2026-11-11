@@ -31,6 +31,9 @@ function [state, out] = simulate_mpc_horizon(state, control, cfg, options)
     p.yaw_d = 0;
     [state.reference_state, referenceOffset] = update_reference_position_offset(state,control);
     p.reference_position_offset_m = referenceOffset;
+    if strcmp(state.reference_state.mode,'velocity_continuous_v2')
+        p.velocity_reference = state.reference_state;
+    end
     if options.enable_repository_disturbance
         p.phase3_repository_disturbance = true;
     end

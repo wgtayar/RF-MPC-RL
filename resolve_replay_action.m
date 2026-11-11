@@ -18,4 +18,7 @@ function [control, execution] = resolve_replay_action(candidate, state, cfg, low
     control = struct('R', execution.R_applied, 'v_cmd', execution.v_exec, ...
         'a_cmd', execution.a_exec, 'action', execution.applied_action, ...
         'action_execution', execution);
+    if isfield(cfg,'REFERENCE')
+        control.reference_mode = configured_reference_mode(cfg);
+    end
 end

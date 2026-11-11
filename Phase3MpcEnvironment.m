@@ -31,7 +31,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             cfg = bundle.cfg;
             batteryFeedbackVersion = phase3battery.version(cfg.BATTERY);
             if isfield(cfg,'ENERGY')
-                if ~isfield(options,'reference_mode'), options.reference_mode='position_continuous_v1'; end
+                if ~isfield(options,'reference_mode'), options.reference_mode=configured_reference_mode(cfg); end
                 if ~isfield(options,'solver_strategy'), options.solver_strategy='default_one_shot_fallback_tight_primal_v1'; end
             end
             if isfield(cfg,'ENERGY_RL')
@@ -355,7 +355,7 @@ function options = localOptions(options)
         options.solver_strategy = 'default';
     end
     options.reference_mode = validatestring(options.reference_mode, ...
-        {'legacy_absolute_time','position_continuous_v1'});
+        {'legacy_absolute_time','position_continuous_v1','velocity_continuous_v2'});
     options.solver_strategy = validatestring(options.solver_strategy, ...
         {'default','default_one_shot_fallback','active_set_feasible_point', ...
         'default_one_shot_fallback_tight_primal_v1','active_set_tight_primal_v1'});

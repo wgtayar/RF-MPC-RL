@@ -65,6 +65,8 @@ function [agent,spec] = create_energy_mission_agent(observationInfo,actionInfo,c
     spec.sample_time_seconds = cfg.CHUNK_DURATION*cfg.APPLY_EVERY;
     spec.network = 'two_hidden_relu_layers_equal_width_independent_twin_critics';
     spec.device = 'cpu';
+    spec.reference_mode = configured_reference_mode(cfg);
+    spec.supervisory_action_schema = supervisory_action_schema(cfg);
     spec.objective_discount_reason = 'undiscounted_finite_mission_additive_time_charge_cost';
 end
 
