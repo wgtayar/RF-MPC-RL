@@ -1,5 +1,7 @@
 # Energy-aware mission interface (2026-11-04)
 
+> **Current entry point (2026-11-11):** see [TRAINING_READINESS.md](TRAINING_READINESS.md) for the current 9S/2 Ah plant, five-second supervisory cadence, qualification scope and remaining training gates. Earlier plant descriptions below are historical; archived configurations keep their saved timing.
+
 > **Plant revision 2026-11-05:** the energy-mission profile now uses the tracked swing model and the locked 7S1P Samsung 18650 4 Ah pack; see [TRACKED_SWING_18650_PACK.md](TRACKED_SWING_18650_PACK.md). The 20S1P/2 Ah figures below describe the 2026-11-04 interface and its archived evidence; the former reference is kept as `energy_mission_reference_20s1p_20261104.json`.
 
 New `setup_RL_MPC()` calls `setup_energy_mission_rl()`. The frozen 20S1P plant, 2 Ah cell, resolved electrical integration, actuator screening, and true-SOC floor remain unchanged. This is the diagnostic baseline, not an approved physical battery design. Historical diagnostic runners explicitly request `setup_RL_MPC('legacy_frozen_v1')`; saved legacy actors cannot be transplanted into the new interface.
@@ -26,7 +28,7 @@ There is no arbitrary SOC trigger. Charge is costly from the start; reserve and 
 
 ## Configuration and comparisons
 
-`setup_energy_mission_rl(options)` accepts `initial_soc` (0.95 or 1), `target_distance_m`, `mission_duration_s`, `decision_interval_s`, `time_weight`, and `seed`. The charge weight is `1-time_weight`. Defaults preserve the 320 m/600 s mission and 50 s decision interval. Longer continuous missions are supported through explicit distance/time; their dynamics, consumption and depletion remain unvalidated until simulated. Battery state persists across decisions/chunks and resets only at an episode boundary.
+`setup_energy_mission_rl(options)` accepts `initial_soc` (0.95 or 1), `target_distance_m`, `mission_duration_s`, `decision_interval_s`, `time_weight`, and `seed`. The charge weight is `1-time_weight`. Defaults preserve the 320 m/600 s mission; the decision interval is now 5 s (120 deadline decisions). Explicit 50 s profiles and archived configurations retain their own timing. The per-decision action caps are unchanged; this intentionally increases supervisory responsiveness. Longer continuous missions are supported through explicit distance/time; their dynamics, consumption and depletion remain unvalidated until simulated. Battery state persists across decisions/chunks and resets only at an episode boundary.
 
 The default weighting was equal (0.5/0.5) until 2026-11-05; it is now time 0.34 / charge 0.66, the balanced calibration on the tracked-swing 7S1P plant (see TRACKED_SWING_18650_PACK.md). The user's chosen decision method is to compare time and total charge/energy before selecting a tradeoff. Report successful-policy Pareto comparisons within identical missions, packs, and starting SOCs; do not compare raw returns across different weights or select a pack by lowering SOC artificially.
 

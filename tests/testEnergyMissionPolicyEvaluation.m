@@ -45,6 +45,10 @@ classdef testEnergyMissionPolicyEvaluation < matlab.unittest.TestCase
    changed=energy_mission_evaluation_bundle(original,struct('initial_soc',1,'target_distance_m',.02,'mission_duration_s',.04,'seed',17));
    tc.verifyEqual(changed.cfg.TEST_SENTINEL,original.cfg.TEST_SENTINEL);
    tc.verifyEqual(changed.cfg.ENERGY,original.cfg.ENERGY);tc.verifyEqual(changed.cfg.TRAIN,original.cfg.TRAIN);
+   tc.verifyEqual(changed.cfg.CHUNK_DURATION,original.cfg.CHUNK_DURATION);
+   tc.verifyEqual(changed.cfg.APPLY_EVERY,original.cfg.APPLY_EVERY);
+   tc.verifyEqual(changed.cfg.DGAMMA_V_MAX,original.cfg.DGAMMA_V_MAX);
+   tc.verifyEqual(changed.cfg.ENERGY_RL.options.decision_interval_s,original.cfg.ENERGY_RL.options.decision_interval_s);
    tc.verifyEqual(changed.cfg.ENERGY_RL.reference,original.cfg.ENERGY_RL.reference);
    tc.verifyEqual(changed.cfg.ENERGY_RL.time_weight,original.cfg.ENERGY_RL.time_weight);
    tc.verifyEqual(changed.cfg.ENERGY_RL.reference_charge_As,original.cfg.ENERGY_RL.reference.charge_As/original.cfg.ENERGY_RL.reference.distance_m*.02);

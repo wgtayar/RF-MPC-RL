@@ -38,7 +38,8 @@ function testFreshAgentDimensionAndNoise(testCase)
     [agent,spec]=create_energy_mission_agent(obs,act,cfg,struct('hidden_units',8));
     verifyEqual(testCase,spec.observation_dimension,schema.dimension);
     verifyEqual(testCase,agent.AgentOptions.DiscountFactor,1);
-    verifyEqual(testCase,agent.AgentOptions.SampleTime,50);
+    verifyEqual(testCase,agent.AgentOptions.SampleTime,5);
+    verifyEqual(testCase,spec.sample_time_seconds,5);
     verifyEqual(testCase,agent.AgentOptions.ExplorationModel.StandardDeviation,0.1);
     verifyEqual(testCase,spec.exploration_physical_standard_deviation(1:3),5e-5*ones(3,1),'AbsTol',1e-15);
     output=getAction(getActor(agent),{zeros(schema.dimension,1)});

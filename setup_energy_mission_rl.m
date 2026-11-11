@@ -5,12 +5,17 @@ function bundle = setup_energy_mission_rl(options)
 if nargin<1, options=struct(); end
 assert(isstruct(options) && isscalar(options),'energyMission:Options','Options must be a scalar struct.');
 defaults=struct('initial_soc',.95,'target_distance_m',320,'mission_duration_s',600, ...
-    'decision_interval_s',50,'time_weight',.34,'seed',20260903);
-% Default time weight 0.34 (charge 0.66) is the balanced preference from
+    'decision_interval_s',5,'time_weight',.34,'seed',20260903);
+% Provisional time weight 0.34 (charge 0.66) is inherited from
 % calibrate_energy_mission_weights on the 2026-11-05 matched comparisons:
 % indifference between the slowest and fastest tested fixed speeds is
 % w*=0.337 (95% start) and 0.334 (100% start); an interior speed wins for
-% w in about [0.26, 0.51]. Recalibrate if the plant, pack or reference changes.
+% w in about [0.26, 0.51]. That older plant differs from the current 9S
+% configuration: compare current-plant time/charge before selecting a weight.
+% Five-second decisions reuse the existing chunk/comparison cadence. The
+% per-action speed/R caps are unchanged, so actions can accumulate ten times
+% more often than at the old 50-second default. This is a provisional
+% supervisory design, not a physical acceleration or stability guarantee.
 assert(all(ismember(fieldnames(options),fieldnames(defaults))), ...
     'energyMission:Options','Unknown mission option.');
 for f=fieldnames(defaults).'
@@ -48,7 +53,7 @@ c.ENERGY.loss_declaration=struct('version','declared_bus_losses_v1', ...
 % 2026-11-06 development holds are QP-feasible to 1.2 m/s (0 failures); 1.0 and
 % 1.1 m/s hold 60 s with tilt <= 0.093 rad, while 1.2 m/s diverges after ~11 s.
 % The former 0.66 m/s cap (GAMMA_V_MAX 0.45 of 0.3-1.1) is retired here. The
-% governor keeps its physical rate, 0.024 m/s per decision.
+% governor keeps its per-decision increment, 0.024 m/s (not acceleration).
 c.V_MAX=1.2; c.GAMMA_V_MAX=1; c.DGAMMA_V_MAX=.024/(c.V_MAX-c.V_MIN);
 % Attitude telemetry (simulate_mpc_horizon out.attitude, window.attitude):
 % logged for the RL design phase, NOT an observation input. The exceedance
@@ -94,7 +99,7 @@ c.LEGACY_REWARD=c.REWARD;
 c.REWARD=struct('version','reward_energy_mission_v1', ...
  'description','Completion priority with undiscounted elapsed-time and committed pack-charge costs.');
 c.TRAIN.discount_factor=1;
-c.EXPERIMENT.id=['energy_mission_' c.BATTERY.fixed_pack_spec.id '_tracked_swing_v2'];
+c.EXPERIMENT.id=['energy_mission_' c.BATTERY.fixed_pack_spec.id '_tracked_swing_timing_v3'];
 c.EXPERIMENT.description='High-SOC locked 18650 pack, tracked swing, actual charge objective, captured supervisory interface; no trained-policy claim.';
 bundle.cfg=c;
 end
