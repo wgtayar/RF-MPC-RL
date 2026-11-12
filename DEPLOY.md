@@ -56,7 +56,7 @@ The campaign trains three time weights (`w_time` = 0.3, 0.63, 0.8) × three seed
 Launch each run as its own MATLAB process from inside `RF-MPC-RL`. Example for `w_time = 0.3`, seed 20260903, with `N` episodes:
 
 ```bash
-matlab -batch "train_energy_mission_rl(fullfile('..','BeyondTorque-Local-Artifacts','train-w030-s20260903'), struct('mode','train','seed',20260903,'max_episodes',N,'setup_options',struct('time_weight',0.3)))"
+matlab -batch "maxNumCompThreads(1); train_energy_mission_rl(fullfile('..','BeyondTorque-Local-Artifacts','train-w030-s20260903'), struct('mode','train','seed',20260903,'max_episodes',N,'setup_options',struct('time_weight',0.3)))"
 ```
 
 For the other runs, change `time_weight` (0.3 / 0.63 / 0.8), `seed`, and the output folder name (`train-w063-s20260904`, and so on).
@@ -64,7 +64,9 @@ For the other runs, change `time_weight` (0.3 / 0.63 / 0.8), `seed`, and the out
 **Pilot first:** run one job (`w_time = 0.63`, seed 20260903) before the other eight. Check that `kappa_cumulative` at completed episodes stays within about [0, 1]. It is stored in each decision record under `reward_info.standardized_monitor`. If it does not, the 84.54 As charge span must be revised before the main runs. The episode budget `N` is decided from the pilot.
 
 Practical notes:
-- A full 320 m episode takes about 35–45 minutes of wall-clock time on the development PC.
+- The simulator runs on one CPU core: about 3.7–4× slower than simulated time per process on the development laptop (Ryzen 7 5825U). A full 320 m episode at 0.8 m/s (401 s simulated) therefore takes about 25 minutes for a process running alone, and about 35–45 minutes with three processes sharing the laptop.
+- Single-threaded MATLAB (`maxNumCompThreads(1)`) was slightly faster than 8 threads in this test (3.7× vs 4.0×). Run one training process per physical core; do not run more processes than physical cores.
+- A GPU does not speed this up. Almost all time is spent in the CPU simulation (MPC quadratic program, rigid-body integration and the electrical model), which is made of many small sequential computations. The actor and critic networks (two layers of 128 units) are too small for a GPU to matter.
 - A checkpoint is saved after every episode under `<output>/training/checkpoints`.
 - An interrupted run cannot be resumed automatically; it must be restarted.
 - Memory is about 1.5–2 GB per process.
