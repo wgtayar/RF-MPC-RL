@@ -95,7 +95,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 cfg.PHASE3.reward_version = options.reward_schema;
                 cfg.PHASE3.environment_version = 'phase3_captured_environment_coverage_reward_v1';
             end
-            if ismember(options.reward_schema_if_present,{'reward_energy_mission_v1','reward_energy_mission_v2'})
+            if ismember(options.reward_schema_if_present,{'reward_energy_mission_v1','reward_energy_mission_v2','reward_energy_mission_v3'})
                 assert(isfield(cfg,'ENERGY_RL'),'energyMission:Config','Energy mission configuration required.');
                 cfg.PHASE3.reward_version=options.reward_schema_if_present;
                 cfg.PHASE3.environment_version='phase3_energy_mission_environment_v1';
@@ -224,7 +224,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             try
                 [chunks,terminal] = obj.advanceDecision(control);
                 window = phase3_decision_window(before,obj.State,chunks,control,obj.Config,terminal);
-                if ismember(obj.Config.PHASE3.reward_version,{'reward_energy_mission_v1','reward_energy_mission_v2'})
+                if ismember(obj.Config.PHASE3.reward_version,{'reward_energy_mission_v1','reward_energy_mission_v2','reward_energy_mission_v3'})
                     [reward,rewardInfo]=compute_energy_mission_reward(window,obj.Config);
                 elseif strcmp(obj.Config.PHASE3.reward_version,'reward_phase3_coverage_candidate_v1')
                     exposure = obj.Writer.decisionRewardExposure(firstRow,obj.Writer.RowCount);
@@ -427,7 +427,7 @@ function options = localOptions(options)
     end
     if isfield(options,'reward_schema')
         schema = string(options.reward_schema);
-        assert(isscalar(schema) && any(schema==["reward_phase3_legacy_bridge_v1","reward_phase3_coverage_candidate_v1","reward_energy_mission_v1","reward_energy_mission_v2"]), ...
+        assert(isscalar(schema) && any(schema==["reward_phase3_legacy_bridge_v1","reward_phase3_coverage_candidate_v1","reward_energy_mission_v1","reward_energy_mission_v2","reward_energy_mission_v3"]), ...
             'Phase3MpcEnvironment:RewardSchema','Require an explicit supported reward schema.');
         options.reward_schema = char(schema);
     end
@@ -442,7 +442,7 @@ function version = localEnergyRewardVersion(cfg)
     % Archived energy-mission configurations predate REWARD.version v2.
     version = 'reward_energy_mission_v1';
     if isfield(cfg,'REWARD') && isfield(cfg.REWARD,'version') && ...
-            ismember(cfg.REWARD.version,{'reward_energy_mission_v1','reward_energy_mission_v2'})
+            ismember(cfg.REWARD.version,{'reward_energy_mission_v1','reward_energy_mission_v2','reward_energy_mission_v3'})
         version = cfg.REWARD.version;
     end
 end

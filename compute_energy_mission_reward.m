@@ -29,7 +29,7 @@ function [reward,info] = compute_energy_mission_reward(window,cfg)
         "actuator_limit","battery_power_limit","leg_reach_limit","battery_depleted", ...
         "numerical_solver_failure_unrecovered","mathematical_constraint_infeasible", ...
         "invalid_state","dynamic_safety_violation","no_safe_action_available", ...
-        "unclassified_solver_failure","infeasible"];
+        "unclassified_solver_failure","infeasible","backward_motion"];
     assert(isscalar(terminal) && any(terminal==allowed),'energyMission:Terminal', ...
         'Require a known physical, numerical or mission terminal label.');
     success = terminal=="mission_complete";
@@ -40,15 +40,37 @@ function [reward,info] = compute_energy_mission_reward(window,cfg)
     failed = strlength(terminal)>0 && ~success;
     potential = @(distance) min(max(distance/scales.target_distance_m,0),1);
     progress = potential(window.distance_end_m)-potential(window.distance_start_m);
-    timeCost = scales.time_weight*window.duration_s/scales.mission_duration_s;
-    chargeCost = scales.charge_weight*window.charge_As/scales.reference_charge_As;
-    terminalContribution = scales.completion_bonus*double(success)-double(failed);
+    standardized = strcmp(scales.reward_version,'reward_energy_mission_v3');
+    if standardized
+        % Excess time/charge over the best pace for this window's progress,
+        % each divided by its achievable span (dimensionless).
+        timeExcess = (window.duration_s-scales.minimum_time_s*progress)/scales.time_span_s;
+        chargeExcess = (window.charge_As-scales.charge_floor_As_per_m* ...
+            scales.target_distance_m*progress)/scales.charge_span_As;
+        timeCost = scales.time_weight*timeExcess;
+        chargeCost = scales.charge_weight*chargeExcess;
+        terminalContribution = scales.completion_bonus*double(success)-scales.failure_penalty*double(failed);
+    else
+        timeCost = scales.time_weight*window.duration_s/scales.mission_duration_s;
+        chargeCost = scales.charge_weight*window.charge_As/scales.reference_charge_As;
+        terminalContribution = scales.completion_bonus*double(success)-double(failed);
+    end
     reward = progress-timeCost-chargeCost+terminalContribution;
     assert(isfinite(reward),'energyMission:Nonfinite','Reward must be finite.');
+    standardizedMonitor = struct();
+    if standardized
+        % Cumulative episode-level tau/kappa at this decision (monitoring the
+        % declared 0-1 spans; kappa outside [0,1] means the charge span needs review).
+        endProgress = potential(window.distance_end_m);
+        standardizedMonitor = struct( ...
+            'tau_cumulative',(window.elapsed_time_s-scales.minimum_time_s*endProgress)/scales.time_span_s, ...
+            'kappa_cumulative',(window.cumulative_charge_As-scales.charge_floor_As_per_m* ...
+                scales.target_distance_m*endProgress)/scales.charge_span_As);
+    end
     info = struct('version',scales.reward_version,'scales',scales, ...
         'progress_contribution',progress,'time_cost',timeCost,'charge_cost',chargeCost, ...
         'terminal_contribution',terminalContribution,'actual_terminal_reason',terminal, ...
-        'booked_charge_As',window.charge_As, ...
+        'booked_charge_As',window.charge_As,'standardized_monitor',standardizedMonitor, ...
         'physical_soc_loss_fraction',window.charge_As/scales.pack_capacity_As, ...
         'training_promoted',false, ...
         'scope','Undiscounted preference objective over actual time and booked physical charge; no SOC trigger, current safety threshold or EKF-increment reward.');

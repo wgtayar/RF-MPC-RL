@@ -14,11 +14,11 @@ classdef testInitialSocCurriculum < matlab.unittest.TestCase
         end
     end
     methods(Test)
-        function defaultsDeclareRangeAndRewardV2(tc)
+        function defaultsDeclareRangeAndReward(tc)
             c=setup_energy_mission_rl().cfg;
             tc.verifyEqual(c.INITIAL_SOC.mode,'fixed');
             tc.verifyEqual(c.INITIAL_SOC.range,[.30 1]);
-            tc.verifyEqual(c.REWARD.version,'reward_energy_mission_v2');
+            tc.verifyEqual(c.REWARD.version,'reward_energy_mission_v3');
             tc.verifyEqual(c.ENERGY_RL.bonus_reference_soc,1);
             u=setup_energy_mission_rl(struct('initial_soc_mode','uniform')).cfg;
             tc.verifyEqual(u.INITIAL_SOC.mode,'uniform');
@@ -31,16 +31,10 @@ classdef testInitialSocCurriculum < matlab.unittest.TestCase
             high=energy_mission_scales(setup_energy_mission_rl(struct('initial_soc',1)).cfg);
             tc.verifyEqual(low.completion_bonus,high.completion_bonus,'AbsTol',1e-12);
             tc.verifyEqual(low.available_charge_budget_As,7200*.8,'AbsTol',1e-9);
-            tc.verifyEqual(low.reward_version,'reward_energy_mission_v2');
-            % Worst admissible success still returns at least 3, from any start.
-            c=setup_energy_mission_rl(struct('initial_soc',.30)).cfg;
-            w=struct('duration_s',c.MISSION_DURATION,'charge_As',low.available_charge_budget_As, ...
-                'distance_start_m',0,'distance_end_m',c.MISSION.D_TARGET_M, ...
-                'elapsed_time_s',c.MISSION_DURATION,'cumulative_charge_As',low.available_charge_budget_As, ...
-                'terminal_reason','mission_complete');
-            [r,info]=compute_energy_mission_reward(w,c);
-            tc.verifyEqual(r,3,'AbsTol',1e-12);
-            tc.verifyEqual(info.version,'reward_energy_mission_v2');
+            tc.verifyEqual(low.reward_version,'reward_energy_mission_v3');
+            % The standardized costs use spans fixed by configuration, not by start SOC.
+            tc.verifyEqual([low.minimum_time_s,low.time_span_s,low.charge_span_As], ...
+                [high.minimum_time_s,high.time_span_s,high.charge_span_As],'AbsTol',1e-12);
         end
 
         function uniformResetSamplesRangeReproducibly(tc)

@@ -36,6 +36,7 @@ suites = {
     'testVelocityReference'
     'testGaitForecast'
     'testInitialSocCurriculum'
+    'testRewardV3'
 };
 root = fileparts(mfilename('fullpath'));
 results = [];

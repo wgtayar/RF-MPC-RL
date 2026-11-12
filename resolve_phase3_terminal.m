@@ -26,6 +26,8 @@ function [reason, isDone] = resolve_phase3_terminal(state, out, distance, cfg)
             otherwise
                 reason = 'unclassified_solver_failure';
         end
+    elseif localBackward(state,distance,cfg)
+        reason = 'backward_motion';
     elseif distance >= cfg.MISSION.D_TARGET_M
         reason = 'mission_complete';
     elseif state.battery.margin_norm <= cfg.BATTERY.terminal_margin
@@ -34,4 +36,14 @@ function [reason, isDone] = resolve_phase3_terminal(state, out, distance, cfg)
         reason = 'time_limit';
     end
     isDone = ~isempty(reason);
+end
+
+function backward = localBackward(state,distance,cfg)
+    % Reward v3 (investigator 2026-11-12): net backward motion over a
+    % decision is a failure. Speed commands are >= V_MIN > 0, so this only
+    % detects a loss of forward locomotion, never a commanded reversal.
+    backward = isfield(cfg,'REWARD') && isfield(cfg.REWARD,'version') && ...
+        strcmp(cfg.REWARD.version,'reward_energy_mission_v3') && ...
+        isfield(state,'decision_bookkeeping') && isfield(state.decision_bookkeeping,'distance_m') && ...
+        distance < state.decision_bookkeeping.distance_m - 1e-9;
 end

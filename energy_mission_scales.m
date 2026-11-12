@@ -32,10 +32,10 @@ function scales = energy_mission_scales(cfg)
     capacity = 3600*battery.n_parallel*battery.C_nom_Ah;
     rewardVersion = 'reward_energy_mission_v1';
     if isfield(cfg,'REWARD') && isfield(cfg.REWARD,'version') && ...
-            strcmp(cfg.REWARD.version,'reward_energy_mission_v2')
-        rewardVersion = 'reward_energy_mission_v2';
+            ismember(cfg.REWARD.version,{'reward_energy_mission_v2','reward_energy_mission_v3'})
+        rewardVersion = cfg.REWARD.version;
     end
-    if strcmp(rewardVersion,'reward_energy_mission_v2')
+    if ismember(rewardVersion,{'reward_energy_mission_v2','reward_energy_mission_v3'})
         % v2: the success bonus and the cumulative-charge bound use the
         % largest admissible start (bonus_reference_soc) so they do not
         % depend on the episode's starting SOC. Charge is still costed only
@@ -48,6 +48,7 @@ function scales = energy_mission_scales(cfg)
             'Initial SOC cannot exceed the bonus reference SOC.');
         budget = capacity*(policy.bonus_reference_soc-battery.terminal_margin);
         scalesVersion = 'energy_mission_scales_v2';
+        if strcmp(rewardVersion,'reward_energy_mission_v3'), scalesVersion = 'energy_mission_scales_v3'; end
     else
         budget = capacity*(battery.SOC_init-battery.terminal_margin);
         scalesVersion = 'energy_mission_scales_v1';
@@ -63,4 +64,22 @@ function scales = energy_mission_scales(cfg)
         'completion_bonus',2+weights(1)+weights(2)*budget/policy.reference_charge_As, ...
         'failure_penalty',1, ...
         'normalization_scope','Charge reference and 1C are units, not physical safety ratings.');
+    if strcmp(rewardVersion,'reward_energy_mission_v3')
+        % v3 (investigator 2026-11-12): time and charge are each scaled to
+        % their achievable span, terminal +1/-1. Penalties are the excess
+        % over the best pace for the progress made, so per-decision terms
+        % telescope to tau=(T-Tmin)/(Tmax-Tmin), kappa=(Q-Qmin)/(Qmax-Qmin).
+        s3 = policy.standardization;
+        validateattributes([s3.max_speed_m_s,s3.charge_floor_As_per_m,s3.charge_span_As_per_m], ...
+            {'double'},{'real','finite','positive','size',[1,3]});
+        minimumTime = cfg.MISSION.D_TARGET_M/s3.max_speed_m_s;
+        assert(minimumTime<cfg.MISSION_DURATION,'energyMission:Standardization', ...
+            'The mission deadline must exceed the fastest possible mission.');
+        scales.minimum_time_s = minimumTime;
+        scales.time_span_s = cfg.MISSION_DURATION-minimumTime;
+        scales.charge_floor_As_per_m = s3.charge_floor_As_per_m;
+        scales.charge_span_As = s3.charge_span_As_per_m*cfg.MISSION.D_TARGET_M;
+        scales.completion_bonus = 1;
+        scales.failure_penalty = 1;
+    end
 end
