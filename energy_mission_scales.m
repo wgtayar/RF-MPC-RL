@@ -30,8 +30,29 @@ function scales = energy_mission_scales(cfg)
             'The finite-horizon additive objective requires an undiscounted return.');
     end
     capacity = 3600*battery.n_parallel*battery.C_nom_Ah;
-    budget = capacity*(battery.SOC_init-battery.terminal_margin);
-    scales = struct('version','energy_mission_scales_v1', ...
+    rewardVersion = 'reward_energy_mission_v1';
+    if isfield(cfg,'REWARD') && isfield(cfg.REWARD,'version') && ...
+            strcmp(cfg.REWARD.version,'reward_energy_mission_v2')
+        rewardVersion = 'reward_energy_mission_v2';
+    end
+    if strcmp(rewardVersion,'reward_energy_mission_v2')
+        % v2: the success bonus and the cumulative-charge bound use the
+        % largest admissible start (bonus_reference_soc) so they do not
+        % depend on the episode's starting SOC. Charge is still costed only
+        % by the coulombs actually consumed in each window.
+        assert(isfield(policy,'bonus_reference_soc'),'energyMission:Configuration', ...
+            'Reward v2 requires a declared bonus reference SOC.');
+        validateattributes(policy.bonus_reference_soc,{'double'}, ...
+            {'scalar','real','finite','>',battery.terminal_margin,'<=',1});
+        assert(battery.SOC_init<=policy.bonus_reference_soc+1e-12,'energyMission:Reserve', ...
+            'Initial SOC cannot exceed the bonus reference SOC.');
+        budget = capacity*(policy.bonus_reference_soc-battery.terminal_margin);
+        scalesVersion = 'energy_mission_scales_v2';
+    else
+        budget = capacity*(battery.SOC_init-battery.terminal_margin);
+        scalesVersion = 'energy_mission_scales_v1';
+    end
+    scales = struct('version',scalesVersion,'reward_version',rewardVersion, ...
         'target_distance_m',cfg.MISSION.D_TARGET_M, ...
         'mission_duration_s',cfg.MISSION_DURATION, ...
         'reference_charge_As',policy.reference_charge_As, ...

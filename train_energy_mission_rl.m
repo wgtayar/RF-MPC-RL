@@ -183,6 +183,11 @@ function options = localOptions(options)
         if ~isfield(options,names{k}), options.(names{k})=defaults.(names{k}); end
     end
     options.mode=validatestring(options.mode,{'build_only','train'});
+    % Training samples each episode's start SOC (investigator 2026-11-12)
+    % unless the caller declares a different initial-SOC mode explicitly.
+    if isstruct(options.setup_options) && ~isfield(options.setup_options,'initial_soc_mode')
+        options.setup_options.initial_soc_mode='uniform';
+    end
     validateattributes(options.max_episodes,{'numeric'},{'scalar','integer','positive','finite'});
     if ~isempty(options.max_steps_per_episode)
         validateattributes(options.max_steps_per_episode,{'numeric'},{'scalar','integer','positive','finite'});

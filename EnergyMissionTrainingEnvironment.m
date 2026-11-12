@@ -12,7 +12,7 @@ classdef EnergyMissionTrainingEnvironment < rl.env.MATLABEnvironment
             assert(isfield(bundle.cfg,'ENERGY_RL'), ...
                 'EnergyMissionTrainingEnvironment:Version','An explicit energy mission config is required.');
             expected = struct('observation_schema','observation_energy_mission_v1', ...
-                'reward_schema','reward_energy_mission_v1', ...
+                'reward_schema',bundle.cfg.REWARD.version, ...
                 'reference_mode',configured_reference_mode(bundle.cfg), ...
                 'solver_strategy','default_one_shot_fallback_tight_primal_v1', ...
                 'mission_end_mode','mpc_step_target_v1');
@@ -34,8 +34,9 @@ classdef EnergyMissionTrainingEnvironment < rl.env.MATLABEnvironment
             mkdir(fullfile(native.Writer.Root,'normalized_actions'));
         end
 
-        function observation = reset(obj)
-            observation = reset(obj.Native);
+        function observation = reset(obj,carriedEnergy)
+            if nargin < 2, carriedEnergy = []; end
+            observation = reset(obj.Native,carriedEnergy);
         end
 
         function [observation,reward,isDone,info] = step(obj,action)

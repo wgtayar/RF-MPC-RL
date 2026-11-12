@@ -13,6 +13,21 @@ This supersedes the 0.024 m/s figures below; the older text is kept as the recor
 
 Evidence: `RL-MPC-Monitor/runs/gait-envelope-20261112-a/RUN_REPORT.md`.
 
+## Update 2026-11-12: initial-SOC curriculum, reward v2, evaluation protocol
+
+Investigator decisions:
+
+- **Training starts:** `train_energy_mission_rl` defaults to `initial_soc_mode='uniform'`. Each episode draws its start SOC uniformly from 30–100% (`INITIAL_SOC`), with no staging. The draw uses a dedicated `threefry` stream seeded with the run seed, so it never shifts the plant, estimator or request-sampling sequences. The episode keeps natural depletion from its start, and the estimator starts at that SOC. Each draw (value, uniform variate, stream state) is archived in the episode start record (`initial_soc_audit`). Later experiments may add more episodes in the SOC ranges where performance changes. That is a data-driven follow-up, not a staged curriculum.
+- **Reward `reward_energy_mission_v2`:** the success bonus is `2 + w_time + w_charge·Qmax/Qref`, with `Qmax = capacity·(1.0 − 0.2)` fixed at the largest admissible start. It no longer depends on the episode's start SOC. Charge is still costed only on coulombs actually consumed (`charge_As/Qref` per window). Every success scores ≥ 3 and every failure ≤ 0, from any start in range. v1 configurations and datasets remain readable and validated with their own semantics.
+- **Fixed starts allowed in range:** `setup_energy_mission_rl` accepts any fixed `initial_soc` in 30–100% (previously 95/100% only).
+- **Evaluation:** a frozen deterministic actor (no exploration). The evaluation bundle always forces a fixed start, even for checkpoints trained with uniform starts.
+  - SOC grid 30/35/45/60/80/95/100%: `run_energy_mission_soc_grid`.
+  - Fixed-speed baselines on the same grid: `run_energy_mission_comparison` with full-mission `setup_options` and `initial_soc` set to the grid.
+  - Continuous depletion from 95% and 100%: `run_energy_mission_continuous_depletion`. It repeats identical 320 m / 600 s missions on one battery, carrying true SOC, cell RC voltages and estimator mean/covariance, and stops at the first non-completed mission. Run it for the policy and for the fixed-speed baselines.
+- **Independent training seeds:** three runs with `seed` 20260903, 20260904 and 20260905. Each is a separate `train_energy_mission_rl` call and output root, evaluated on the full protocol. Results are reported across all three seeds, never the best one alone.
+
+Still open before a meaningful learning run: time-weight qualification on the current plant (break-even between 0.8 and 1.0 m/s is about `w_time = 0.30`; the default 0.34 is provisional), terminal-penalty review now that `actuator_limit` is an expected learned boundary, and TD3 hyperparameters, which are provisional and not performance-tuned.
+
 ## Fixed study conditions
 
 - Keep the selected 9S1P, 2 Ah pack fixed across runs and episodes. Do not resize the pack, scale current, or accelerate SOC depletion to produce a learning signal.

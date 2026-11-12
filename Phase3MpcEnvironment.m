@@ -20,6 +20,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
         LowerR
         UpperR
         ResetStream
+        SocStream
     end
     methods
         function obj = Phase3MpcEnvironment(bundle, root, metadata, options)
@@ -36,10 +37,10 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             end
             if isfield(cfg,'ENERGY_RL')
                 if ~isfield(options,'observation_schema'),options.observation_schema='observation_energy_mission_v1';end
-                if ~isfield(options,'reward_schema'),options.reward_schema='reward_energy_mission_v1';end
+                if ~isfield(options,'reward_schema'),options.reward_schema=localEnergyRewardVersion(cfg);end
                 if ~isfield(options,'mission_end_mode'),options.mission_end_mode='mpc_step_target_v1';end
                 assert(strcmp(options.observation_schema,'observation_energy_mission_v1') && ...
-                    strcmp(options.reward_schema,'reward_energy_mission_v1') && ...
+                    strcmp(options.reward_schema,localEnergyRewardVersion(cfg)) && ...
                     strcmp(options.mission_end_mode,'mpc_step_target_v1') && ...
                     ~isfield(options,'initial_condition'), ...
                     'energyMission:Schema','Energy mission requires paired current schemas, exact target stop, and configured high-SOC reset.');
@@ -94,9 +95,9 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 cfg.PHASE3.reward_version = options.reward_schema;
                 cfg.PHASE3.environment_version = 'phase3_captured_environment_coverage_reward_v1';
             end
-            if strcmp(options.reward_schema_if_present,'reward_energy_mission_v1')
+            if ismember(options.reward_schema_if_present,{'reward_energy_mission_v1','reward_energy_mission_v2'})
                 assert(isfield(cfg,'ENERGY_RL'),'energyMission:Config','Energy mission configuration required.');
-                cfg.PHASE3.reward_version='reward_energy_mission_v1';
+                cfg.PHASE3.reward_version=options.reward_schema_if_present;
                 cfg.PHASE3.environment_version='phase3_energy_mission_environment_v1';
             end
             options=rmfield(options,'reward_schema_if_present');
@@ -123,16 +124,46 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             obj.UpperR = bundle.upper_abs(:);
             obj.Options = options;
             obj.ResetStream = RandStream('mt19937ar','Seed',cfg.RNG_SEED);
+            obj.SocStream = [];
+            if isfield(cfg,'INITIAL_SOC') && strcmp(cfg.INITIAL_SOC.mode,'uniform')
+                % Dedicated generator so start-SOC draws never shift the
+                % plant/estimator or request-sampling random sequences.
+                obj.SocStream = RandStream(cfg.INITIAL_SOC.stream_algorithm,'Seed',cfg.INITIAL_SOC.seed);
+            end
             obj.Writer = ExactStateDataset(root,cfg,metadata);
         end
 
-        function observation = reset(obj)
+        function observation = reset(obj,carriedEnergy)
+            % carriedEnergy (optional, evaluation only): energy state from the
+            % end of a previous mission. The new mission starts at that true
+            % SOC with the same cell RC and estimator state (continuous
+            % depletion); only per-mission charge/energy counters restart.
+            if nargin < 2, carriedEnergy = []; end
             obj.requireOpen();
             if obj.Episode > 0 && ~obj.Done
                 obj.recordEpisodeEnd('reset_interrupted');
             end
             cfg = obj.Config;
-            obj.State = initialize_mpc_replay_state(cfg,0);
+            [episodeCfg,initialSocAudit] = obj.episodeInitialSoc(cfg);
+            carriedAudit = struct();
+            if ~isempty(carriedEnergy)
+                assert(isempty(obj.SocStream),'Phase3MpcEnvironment:CarriedBattery', ...
+                    'Continuous depletion requires a fixed initial-SOC configuration.');
+                assert(isstruct(carriedEnergy) && all(isfield(carriedEnergy,{'soc','rc','estimate','cov'})), ...
+                    'Phase3MpcEnvironment:CarriedBattery','Carried energy state is incomplete.');
+                episodeCfg.BATTERY.SOC_init = carriedEnergy.soc;
+                episodeCfg.BATTERY.metric_init = 100*carriedEnergy.soc;
+            end
+            obj.State = initialize_mpc_replay_state(episodeCfg,0);
+            if ~isempty(carriedEnergy)
+                for name = {'soc','rc','estimate','cov'}
+                    obj.State.energy.(name{1}) = carriedEnergy.(name{1});
+                end
+                carriedAudit = struct('version','continuous_depletion_carry_v1', ...
+                    'carried_fields',{{'soc','rc','estimate','cov'}}, ...
+                    'reset_fields',{{'chargeAs','energyWh','elapsed','voltageLimitSteps','torqueLimitSteps'}}, ...
+                    'soc',carriedEnergy.soc,'estimate',carriedEnergy.estimate);
+            end
             initialConditionAudit = struct();
             if isfield(obj.Options,'initial_condition')
                 [obj.State,initialConditionAudit] = apply_phase3_initial_condition( ...
@@ -172,6 +203,12 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             if isfield(obj.Options,'initial_condition')
                 record.initial_condition_audit = initialConditionAudit;
             end
+            if ~isempty(fieldnames(initialSocAudit))
+                record.initial_soc_audit = initialSocAudit;
+            end
+            if ~isempty(fieldnames(carriedAudit))
+                record.carried_battery_audit = carriedAudit;
+            end
             obj.Writer.writeEpisode(obj.Episode,'start',record);
         end
 
@@ -187,7 +224,7 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             try
                 [chunks,terminal] = obj.advanceDecision(control);
                 window = phase3_decision_window(before,obj.State,chunks,control,obj.Config,terminal);
-                if strcmp(obj.Config.PHASE3.reward_version,'reward_energy_mission_v1')
+                if ismember(obj.Config.PHASE3.reward_version,{'reward_energy_mission_v1','reward_energy_mission_v2'})
                     [reward,rewardInfo]=compute_energy_mission_reward(window,obj.Config);
                 elseif strcmp(obj.Config.PHASE3.reward_version,'reward_phase3_coverage_candidate_v1')
                     exposure = obj.Writer.decisionRewardExposure(firstRow,obj.Writer.RowCount);
@@ -330,6 +367,24 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
             end
         end
 
+        function [episodeCfg,audit] = episodeInitialSoc(obj,cfg)
+            episodeCfg = cfg;
+            audit = struct();
+            if isempty(obj.SocStream)
+                return
+            end
+            range = cfg.INITIAL_SOC.range;
+            streamStateBefore = obj.SocStream.State;
+            draw = rand(obj.SocStream);
+            soc = range(1)+draw*(range(2)-range(1));
+            episodeCfg.BATTERY.SOC_init = soc;
+            episodeCfg.BATTERY.metric_init = 100*soc;
+            audit = struct('version',cfg.INITIAL_SOC.version,'episode',obj.Episode+1, ...
+                'initial_soc',soc,'uniform_draw',draw,'range',range, ...
+                'stream_algorithm',cfg.INITIAL_SOC.stream_algorithm,'stream_seed',cfg.INITIAL_SOC.seed, ...
+                'stream_state_before',streamStateBefore);
+        end
+
         function recordEpisodeEnd(obj,reason)
             record = struct('state',obj.State,'observation',obj.Observation, ...
                 'lifecycle_reason',reason,'rng_state',rng);
@@ -372,7 +427,7 @@ function options = localOptions(options)
     end
     if isfield(options,'reward_schema')
         schema = string(options.reward_schema);
-        assert(isscalar(schema) && any(schema==["reward_phase3_legacy_bridge_v1","reward_phase3_coverage_candidate_v1","reward_energy_mission_v1"]), ...
+        assert(isscalar(schema) && any(schema==["reward_phase3_legacy_bridge_v1","reward_phase3_coverage_candidate_v1","reward_energy_mission_v1","reward_energy_mission_v2"]), ...
             'Phase3MpcEnvironment:RewardSchema','Require an explicit supported reward schema.');
         options.reward_schema = char(schema);
     end
@@ -381,4 +436,13 @@ function options = localOptions(options)
     candidate = isfield(options,'reward_schema') && strcmp(options.reward_schema,'reward_phase3_coverage_candidate_v1');
     assert(isfield(options,'reward_policy')==candidate, ...
         'Phase3MpcEnvironment:RewardPolicy','Only the explicit candidate schema requires a complete reward policy.');
+end
+
+function version = localEnergyRewardVersion(cfg)
+    % Archived energy-mission configurations predate REWARD.version v2.
+    version = 'reward_energy_mission_v1';
+    if isfield(cfg,'REWARD') && isfield(cfg.REWARD,'version') && ...
+            ismember(cfg.REWARD.version,{'reward_energy_mission_v1','reward_energy_mission_v2'})
+        version = cfg.REWARD.version;
+    end
 end
