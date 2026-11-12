@@ -11,11 +11,15 @@ function report = run_energy_mission_continuous_depletion(policy,outputRoot,opti
 %         (deterministic actor, no exploration), or
 %         struct('fixed_speed_m_s',v) for a fixed-speed baseline.
 if nargin<3,options=struct();end
-d=struct('initial_soc',.95,'max_missions',12,'run_id','');
+d=struct('initial_soc',.95,'max_missions',12,'run_id','','mission',struct());
+% mission: optional struct with target_distance_m/mission_duration_s for
+% diagnostic short missions; defaults keep the configured 320 m / 600 s.
 assert(isstruct(options) && isscalar(options) && all(ismember(fieldnames(options),fieldnames(d))), ...
  'energyDepletion:Options','Unknown option.');
 for n=fieldnames(d).',if ~isfield(options,n{1}),options.(n{1})=d.(n{1});end,end
 validateattributes(options.max_missions,{'double'},{'scalar','integer','positive'});
+assert(isstruct(options.mission) && all(ismember(fieldnames(options.mission),{'target_distance_m','mission_duration_s'})), ...
+ 'energyDepletion:Mission','Only mission distance/duration may be overridden.');
 source=bootstrap_RF_MPC_RL();sourceStart=localSource(source);
 assert(~sourceStart.dirty,'energyDepletion:DirtySource','Commit source before captured evaluation.');
 canonical=char(java.io.File(char(outputRoot)).getCanonicalPath());
@@ -23,14 +27,16 @@ assert(~startsWith(string(canonical),string(source)+filesep),'energyDepletion:Ou
  'Evidence belongs outside the source checkout.');
 fixedSpeed=isstruct(policy) && isfield(policy,'fixed_speed_m_s');
 if fixedSpeed
- bundle=setup_energy_mission_rl(struct('initial_soc',options.initial_soc,'initial_soc_mode','fixed'));
+ setup=options.mission;setup.initial_soc=options.initial_soc;setup.initial_soc_mode='fixed';
+ bundle=setup_energy_mission_rl(setup);
  c=bundle.cfg;gamma=(policy.fixed_speed_m_s-c.V_MIN)/(c.V_MAX-c.V_MIN);
  assert(gamma>=c.GAMMA_V_MIN && gamma<=c.GAMMA_V_MAX+1e-12,'energyDepletion:Speed','Speed outside action bounds.');
  gamma=min(gamma,c.GAMMA_V_MAX);provenance=struct('fixed_speed_m_s',policy.fixed_speed_m_s);
  sourcePolicy=sprintf('fixed_speed_%0.3f',policy.fixed_speed_m_s);
 else
  checkpoint=load_energy_mission_checkpoint(policy);
- bundle=energy_mission_evaluation_bundle(checkpoint.bundle,struct('initial_soc',options.initial_soc));
+ overrides=options.mission;overrides.initial_soc=options.initial_soc;
+ bundle=energy_mission_evaluation_bundle(checkpoint.bundle,overrides);
  provenance=rmfield(checkpoint,{'actor','bundle'});sourcePolicy='captured_normalized_td3_checkpoint';
 end
 bundle.cfg.CONTINUOUS_DEPLETION=struct('version','continuous_depletion_v1','options',options, ...
