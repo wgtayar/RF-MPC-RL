@@ -117,36 +117,30 @@ s(s<0) = 0;
 s(s>1) = 1;
 
 %% FSM in prediction horizon
+% Future phases are counted from each leg's saved active-phase end Tb, which
+% was fixed when that phase began (possibly at an earlier speed). The next
+% phase lasts Tsw after stance, or the current stance estimate Tst after
+% swing; phases then alternate with period Tst + Tsw. (2026-11-12 review:
+% the previous Ta + current Tst boundary mispredicted contact whenever the
+% stance duration changed with measured speed.)
 FSM_ = repmat(FSM,[1,p.predHorizon]);
 for i_leg = 1:4
+    if FSM(i_leg) == 1
+        nextDuration = Tsw;
+    else
+        nextDuration = Tst;
+    end
     for ii = 2:p.predHorizon
         if t_(ii) <= Ta(i_leg)
             FSM_(i_leg,ii) = 1;
-        elseif (Ta(i_leg) < t_(ii)) && (t_(ii) < Tb(i_leg))
+        elseif t_(ii) < Tb(i_leg)
             FSM_(i_leg,ii) = FSM(i_leg);
-        elseif Ta(i_leg) + Tst + Tsw < t_(ii)
-            % Beyond one full cycle: keep alternating phases periodically
-            % instead of freezing the current phase (multi-cycle horizon fix).
-            % Bit-identical to the previous forecast wherever that forecast
-            % was correct, i.e. before Ta + cycle + current-phase duration.
-            if FSM(i_leg) == 1
-                Tcur = Tst;
-            else
-                Tcur = Tsw;
-            end
-            tau = mod(t_(ii) - (Ta(i_leg) + Tst + Tsw), Tst + Tsw);
-            if tau < Tcur
-                FSM_(i_leg,ii) = FSM(i_leg);
-            elseif FSM(i_leg) == 1
-                FSM_(i_leg,ii) = 2;
-            else
-                FSM_(i_leg,ii) = 1;
-            end
         else
-            if FSM(i_leg) == 1
-                FSM_(i_leg,ii) = 2;
+            tau = mod(t_(ii) - Tb(i_leg), Tst + Tsw);
+            if tau < nextDuration
+                FSM_(i_leg,ii) = 3 - FSM(i_leg);
             else
-                FSM_(i_leg,ii) = 1;
+                FSM_(i_leg,ii) = FSM(i_leg);
             end
         end
     end

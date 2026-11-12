@@ -38,12 +38,24 @@ function [reason, isDone] = resolve_phase3_terminal(state, out, distance, cfg)
     isDone = ~isempty(reason);
 end
 
-function backward = localBackward(state,distance,cfg)
+function backward = localBackward(state,~,cfg)
     % Reward v3 (investigator 2026-11-12): net backward motion over a
     % decision is a failure. Speed commands are >= V_MIN > 0, so this only
     % detects a loss of forward locomotion, never a commanded reversal.
-    backward = isfield(cfg,'REWARD') && isfield(cfg.REWARD,'version') && ...
-        strcmp(cfg.REWARD.version,'reward_energy_mission_v3') && ...
-        isfield(state,'decision_bookkeeping') && isfield(state.decision_bookkeeping,'distance_m') && ...
-        distance < state.decision_bookkeeping.distance_m - 1e-9;
+    % Uses the signed displacement from the episode origin (the distance
+    % argument is clipped at zero for reward progress and would hide
+    % motion behind the origin; 2026-11-12 review). The decision's start
+    % progress is clipped at zero, which is exact because an episode starts
+    % at the origin and any earlier backward decision already terminated it.
+    backward = false;
+    if ~(isfield(cfg,'REWARD') && isfield(cfg.REWARD,'version') && ...
+            strcmp(cfg.REWARD.version,'reward_energy_mission_v3'))
+        return
+    end
+    assert(isfield(state,'decision_bookkeeping') && ...
+        all(isfield(state.decision_bookkeeping,{'distance_m','initial_position_x'})), ...
+        'resolve_phase3_terminal:Bookkeeping', ...
+        'Reward v3 backward detection requires decision start progress and episode origin.');
+    signedDisplacement = state.Xt(1)-state.decision_bookkeeping.initial_position_x;
+    backward = signedDisplacement < state.decision_bookkeeping.distance_m - 1e-9;
 end

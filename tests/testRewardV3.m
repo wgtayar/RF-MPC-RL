@@ -51,13 +51,25 @@ classdef testRewardV3 < matlab.unittest.TestCase
             b = setup_energy_mission_rl(); c = b.cfg;
             c.PHASE3.options.mission_end_mode = 'mpc_step_target_v1';
             state = initialize_mpc_replay_state(c,0);
-            state.decision_bookkeeping = struct('distance_m',50);
+            origin = state.Xt(1);
             out = struct('terminal_reason',"horizon_complete",'completed_horizon',true, ...
                 'qp_failed_count',0,'integrated_steps',500);
+            % Backward after progress (50 m -> 49.5 m).
+            state.decision_bookkeeping = struct('initial_position_x',origin,'distance_m',50);
+            state.Xt(1) = origin+49.5;
             tc.verifyEqual(resolve_phase3_terminal(state,out,49.5,c),'backward_motion');
+            state.Xt(1) = origin+52;
             tc.verifyEqual(resolve_phase3_terminal(state,out,52,c),'');
+            % Backward behind the origin: the clipped distance is 0, the signed one -0.5 m.
+            state.decision_bookkeeping = struct('initial_position_x',origin,'distance_m',0);
+            state.Xt(1) = origin-.5;
+            tc.verifyEqual(resolve_phase3_terminal(state,out,max(0,state.Xt(1)-origin),c),'backward_motion');
+            state.Xt(1) = origin+1;
+            tc.verifyEqual(resolve_phase3_terminal(state,out,1,c),'');
+            % v2 configurations keep their historical terminal semantics.
             legacy = c; legacy.REWARD.version = 'reward_energy_mission_v2';
-            tc.verifyEqual(resolve_phase3_terminal(state,out,49.5,legacy),'');
+            state.Xt(1) = origin-.5;
+            tc.verifyEqual(resolve_phase3_terminal(state,out,0,legacy),'');
         end
     end
 end
