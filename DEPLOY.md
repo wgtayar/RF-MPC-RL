@@ -23,8 +23,8 @@ Every run writes the monitor repository's commit into its manifest, so the two r
 ```
 
 ```bash
-git clone -b review/tracked-swing-18650-pack git@github.com:wgtayar/RF-MPC-RL.git
-git clone -b review/fixed-pack-energy git@github.com:wgtayar/RL-MPC-Monitor.git
+git clone git@github.com:wgtayar/RF-MPC-RL.git
+git clone git@github.com:wgtayar/RL-MPC-Monitor.git
 mkdir BeyondTorque-Local-Artifacts
 ```
 
