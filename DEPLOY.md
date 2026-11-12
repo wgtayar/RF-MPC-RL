@@ -49,6 +49,41 @@ The training and evaluation entry points are:
 | Fixed-speed baselines on the grid | `run_energy_mission_comparison(outputRoot, options)` |
 | Continuous depletion | `run_energy_mission_continuous_depletion(policy, outputRoot, options)` |
 
-The training campaign is 3 time weights × 3 seeds (20260903, 20260904, 20260905). Launch each run in its own MATLAB process. The exact launch commands are added to this file together with the final reward version. **Do not start the campaign before that commit.**
+## 5. Training campaign (reward v3)
 
-A full 320 m episode takes about 35–45 minutes of wall-clock time on the development PC.
+The campaign trains three time weights (`w_time` = 0.3, 0.63, 0.8) × three seeds (20260903, 20260904, 20260905), nine runs in total. Each run samples a new start SOC uniformly in 30–100% for every episode.
+
+Launch each run as its own MATLAB process from inside `RF-MPC-RL`. Example for `w_time = 0.3`, seed 20260903, with `N` episodes:
+
+```bash
+matlab -batch "train_energy_mission_rl(fullfile('..','BeyondTorque-Local-Artifacts','train-w030-s20260903'), struct('mode','train','seed',20260903,'max_episodes',N,'setup_options',struct('time_weight',0.3)))"
+```
+
+For the other runs, change `time_weight` (0.3 / 0.63 / 0.8), `seed`, and the output folder name (`train-w063-s20260904`, and so on).
+
+**Pilot first:** run one job (`w_time = 0.63`, seed 20260903) before the other eight. Check that `kappa_cumulative` at completed episodes stays within about [0, 1]. It is stored in each decision record under `reward_info.standardized_monitor`. If it does not, the 84.54 As charge span must be revised before the main runs. The episode budget `N` is decided from the pilot.
+
+Practical notes:
+- A full 320 m episode takes about 35–45 minutes of wall-clock time on the development PC.
+- A checkpoint is saved after every episode under `<output>/training/checkpoints`.
+- An interrupted run cannot be resumed automatically; it must be restarted.
+- Memory is about 1.5–2 GB per process.
+
+## 6. Evaluation after training
+
+```matlab
+% Fixed-start SOC grid (30/35/45/60/80/95/100%) for one trained run
+run_energy_mission_soc_grid('../BeyondTorque-Local-Artifacts/train-w063-s20260903', ...
+    '../BeyondTorque-Local-Artifacts/eval-grid-w063-s20260903');
+
+% Continuous depletion from 95% and 100% (policy, then a fixed-speed baseline)
+run_energy_mission_continuous_depletion('../BeyondTorque-Local-Artifacts/train-w063-s20260903', ...
+    '../BeyondTorque-Local-Artifacts/depl95-w063-s20260903', struct('initial_soc',.95));
+run_energy_mission_continuous_depletion(struct('fixed_speed_m_s',.8), ...
+    '../BeyondTorque-Local-Artifacts/depl95-fixed080', struct('initial_soc',.95));
+
+% Fixed-speed baselines on the SOC grid (full 320 m missions)
+run_energy_mission_comparison('../BeyondTorque-Local-Artifacts/baselines-grid', struct( ...
+    'setup_options',struct('target_distance_m',320,'mission_duration_s',600,'decision_interval_s',5), ...
+    'speeds_m_s',[.5333 .8 1.0],'initial_soc',[.30 .35 .45 .60 .80 .95 1]));
+```
