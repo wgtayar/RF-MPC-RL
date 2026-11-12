@@ -23,15 +23,15 @@ classdef testEnergyMissionTiming < matlab.unittest.TestCase
                 'beyond_torque_9s1p_18650_nancy_2ah_20261106_v1');
             tc.verifyEqual([c.BATTERY.n_series,c.BATTERY.n_parallel,c.BATTERY.C_nom_Ah],[9,1,2]);
             tc.verifyEqual([c.ENERGY.auxW,c.ENERGY.inverterEfficiency],[15,.90]);
-            tc.verifyEqual(c.DGAMMA_V_MAX*(c.V_MAX-c.V_MIN),.024,'AbsTol',1e-14);
+            tc.verifyEqual(c.DGAMMA_V_MAX*(c.V_MAX-c.V_MIN),.2,'AbsTol',1e-14);
             tc.verifyEqual(c.DR_MAX,.0005);
         end
 
         function testedSpeedRequestsAreReachableWithinDefaultHorizon(tc)
             b = tc.Bundle; c = b.cfg;
             targets = [.8,1,1.2];
-            expectedActions = [12,20,28];
-            expectedApplicationTimes = [55,95,135];
+            expectedActions = [2,3,4];
+            expectedApplicationTimes = [5,10,15];
             for j = 1:numel(targets)
                 state = initialize_mpc_replay_state(c,0);
                 state.R = b.initial_R;
@@ -52,7 +52,7 @@ classdef testEnergyMissionTiming < matlab.unittest.TestCase
                 tc.verifyLessThan(first,c.EP_STEPS);
                 changes = diff([initialSpeed;commanded]);
                 tc.verifyGreaterThanOrEqual(min(changes),-1e-14);
-                tc.verifyLessThanOrEqual(max(changes),.024+1e-14);
+                tc.verifyLessThanOrEqual(max(changes),.2+1e-14);
                 tc.verifyEqual(commanded(end),targets(j),'AbsTol',1e-12);
             end
         end
@@ -74,7 +74,7 @@ classdef testEnergyMissionTiming < matlab.unittest.TestCase
                     state = acceptSupervisor(state,control,execution);
                 end
                 changes = diff([before;commanded]);
-                tc.verifyLessThanOrEqual(max(abs(changes)),.024+1e-14);
+                tc.verifyLessThanOrEqual(max(abs(changes)),.2+1e-14);
                 tc.verifyGreaterThanOrEqual(min(commanded),c.V_MIN-1e-14);
                 tc.verifyLessThanOrEqual(max(commanded),c.V_MAX+1e-14);
                 if requestedGamma>1

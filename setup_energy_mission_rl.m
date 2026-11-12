@@ -53,8 +53,12 @@ c.ENERGY.loss_declaration=struct('version','declared_bus_losses_v1', ...
 % 2026-11-06 development holds are QP-feasible to 1.2 m/s (0 failures); 1.0 and
 % 1.1 m/s hold 60 s with tilt <= 0.093 rad, while 1.2 m/s diverges after ~11 s.
 % The former 0.66 m/s cap (GAMMA_V_MAX 0.45 of 0.3-1.1) is retired here. The
-% governor keeps its per-decision increment, 0.024 m/s (not acceleration).
-c.V_MAX=1.2; c.GAMMA_V_MAX=1; c.DGAMMA_V_MAX=.024/(c.V_MAX-c.V_MIN);
+% Per-decision speed-command change cap (not acceleration): 0.2 m/s
+% (investigator 2026-11-12, was 0.024). Any smaller change remains allowed.
+% Basis: 203 native transitions with corrected gait forecast, |dv| 0.024-0.2,
+% a 0.2/0.5, early/mid operation, 95%/25% SOC, staircases and reversals:
+% zero QP failures; terminations depend on target speed and SOC only.
+c.V_MAX=1.2; c.GAMMA_V_MAX=1; c.DGAMMA_V_MAX=.2/(c.V_MAX-c.V_MIN);
 % Desired position and velocity stay continuous across every command change.
 % Reuse the inherited effective acceleration range [0.2, 0.5] m/s^2.
 % The old startup v/a time clamp is not a transition-acceleration model.

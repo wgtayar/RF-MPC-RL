@@ -2,6 +2,17 @@
 
 Review date: 2026-11-11. This document separates implemented behavior, bounded evidence, and work still required. It is not a claim that the full operating envelope or a trained controller has been validated.
 
+## Update 2026-11-12: gait forecast, speed-change cap, envelope
+
+This supersedes the 0.024 m/s figures below; the older text is kept as the record of that configuration.
+
+- **Gait forecast fixed** (`fcns/fcn_FSM.m`). The MPC contact forecast now keeps alternating stance and swing beyond one gait cycle, and each leg keeps its own swing anchor. The forecast is bit-identical to the previous one wherever the gait cycle (`min(0.3, 0.2/|v|) + 0.15 s`) is at least the 0.4 s horizon, i.e. at 0.80 m/s and below. Earlier evidence at those speeds is unaffected. Above 0.80 m/s it changes: in a 1.0 m/s run, 109 of 500 solves had used a wrong forecast.
+- **Per-decision speed-command change cap: 0.2 m/s** (`DGAMMA_V_MAX = 0.2/(V_MAX - V_MIN)`, investigator decision). Any smaller change remains allowed. From 0.5333 m/s, 0.8/1.0/1.2 m/s become reachable after 2/3/4 decisions (first request at 5/10/15 s). At 0.2–0.5 m/s² a 0.2 m/s ramp lasts 0.4–1.0 s and still ends before the next 5 s decision.
+- **Envelope kept at 1.2 m/s** (investigator decision). Above the sustainable speed for the current SOC, episodes end with `actuator_limit` (drive voltage) before any QP failure. In all runs to date the drive-limit stop preceded QP infeasibility. The agent is expected to learn that boundary.
+- **Massless legs retained** as in RF-MPC; see the monitor's `docs/project/MASSLESS_LEGS_DEFENSE.md`. No gait-timing or clearance actions are added.
+
+Evidence: `RL-MPC-Monitor/runs/gait-envelope-20261112-a/RUN_REPORT.md`.
+
 ## Fixed study conditions
 
 - Keep the selected 9S1P, 2 Ah pack fixed across runs and episodes. Do not resize the pack, scale current, or accelerate SOC depletion to produce a learning signal.

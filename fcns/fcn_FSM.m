@@ -88,7 +88,9 @@ for i_leg = 1:4
         FSM(i_leg) = FSM(i_leg) + 1;
         Ta(i_leg) = t;
         Tb(i_leg) = Ta(i_leg) + Tsw;
-        pf_R_trans = Xt(idx_pf);
+        % Per-leg anchor: never overwrite another leg's active swing anchor.
+        idx_leg = 3*(i_leg-1) + (1:3);
+        pf_R_trans(idx_leg) = Xt(idx_pf(idx_leg));
     elseif FSM(i_leg) == 2 && (s(i_leg) >= 1 - 1e-7)    % swing to stance
         if gait == -3
             ph = R * [[L/2;W/2+d;0],[L/2;-W/2-d;0]] + repmat(pc,[1,2]);
@@ -97,13 +99,15 @@ for i_leg = 1:4
                 FSM(i_leg) = 1;
                 Ta(i_leg) = t;
                 Tb(i_leg) = Ta(i_leg) + Tst;
-                pf_R_trans = Xt(idx_pf);
+                idx_leg = 3*(i_leg-1) + (1:3);
+                pf_R_trans(idx_leg) = Xt(idx_pf(idx_leg));
             end
         else
             FSM(i_leg) = 1;
             Ta(i_leg) = t;
             Tb(i_leg) = Ta(i_leg) + Tst;
-            pf_R_trans = Xt(idx_pf);
+            idx_leg = 3*(i_leg-1) + (1:3);
+            pf_R_trans(idx_leg) = Xt(idx_pf(idx_leg));
         end
     end
 end
@@ -121,7 +125,23 @@ for i_leg = 1:4
         elseif (Ta(i_leg) < t_(ii)) && (t_(ii) < Tb(i_leg))
             FSM_(i_leg,ii) = FSM(i_leg);
         elseif Ta(i_leg) + Tst + Tsw < t_(ii)
-            FSM_(i_leg,ii) = FSM(i_leg);
+            % Beyond one full cycle: keep alternating phases periodically
+            % instead of freezing the current phase (multi-cycle horizon fix).
+            % Bit-identical to the previous forecast wherever that forecast
+            % was correct, i.e. before Ta + cycle + current-phase duration.
+            if FSM(i_leg) == 1
+                Tcur = Tst;
+            else
+                Tcur = Tsw;
+            end
+            tau = mod(t_(ii) - (Ta(i_leg) + Tst + Tsw), Tst + Tsw);
+            if tau < Tcur
+                FSM_(i_leg,ii) = FSM(i_leg);
+            elseif FSM(i_leg) == 1
+                FSM_(i_leg,ii) = 2;
+            else
+                FSM_(i_leg,ii) = 1;
+            end
         else
             if FSM(i_leg) == 1
                 FSM_(i_leg,ii) = 2;
