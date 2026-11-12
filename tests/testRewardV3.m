@@ -14,8 +14,8 @@ classdef testRewardV3 < matlab.unittest.TestCase
             tc.verifyEqual(c.ENERGY_RL.time_weight,.63);
             tc.verifyEqual(s.minimum_time_s,320/1.2,'AbsTol',1e-12);
             tc.verifyEqual(s.time_span_s,600-320/1.2,'AbsTol',1e-12);
-            tc.verifyEqual(s.charge_floor_As_per_m*320,631.34,'AbsTol',.01);
-            tc.verifyEqual(s.charge_span_As,84.53,'AbsTol',.01);
+            tc.verifyEqual(s.charge_floor_As_per_m*320,637.57,'AbsTol',.01);
+            tc.verifyEqual(s.charge_span_As,78.17,'AbsTol',.01);
             tc.verifyEqual([s.completion_bonus,s.failure_penalty],[1 1]);
         end
 

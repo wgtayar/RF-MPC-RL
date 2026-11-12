@@ -61,7 +61,10 @@ matlab -batch "maxNumCompThreads(1); train_energy_mission_rl(fullfile('..','Beyo
 
 For the other runs, change `time_weight` (0.3 / 0.63 / 0.8), `seed`, and the output folder name (`train-w063-s20260904`, and so on).
 
-**Pilot first:** run one job (`w_time = 0.63`, seed 20260903) before the other eight. Check that `kappa_cumulative` at completed episodes stays within about [0, 1]. It is stored in each decision record under `reward_info.standardized_monitor`. If it does not, the 84.54 As charge span must be revised before the main runs. The episode budget `N` is decided from the pilot.
+**Pilot first:** run one job (`w_time = 0.63`, seed 20260903) before the other eight. Before setting the episode budget `N` for the main runs, the pilot must show:
+- training well beyond TD3's 64-transition warm-up, with the actor and both critic parameters actually changing (`report.json`: `actor_parameters_changed`, `critic_parameters_changed`);
+- `kappa_cumulative` at completed episodes staying within about [0, 1]. It is stored in each decision record under `reward_info.standardized_monitor`. If it does not, the 78.17 As charge span must be revised before the main runs;
+- how episodes end (completion versus each failure type), wall-clock time per episode, and disk usage per episode.
 
 Practical notes:
 - The simulator runs on one CPU core: about 3.7–4× slower than simulated time per process on the development laptop (Ryzen 7 5825U). A full 320 m episode at 0.8 m/s (401 s simulated) therefore takes about 25 minutes for a process running alone, and about 35–45 minutes with three processes sharing the laptop.
