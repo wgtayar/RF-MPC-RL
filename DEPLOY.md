@@ -33,6 +33,22 @@ mkdir BeyondTorque-Local-Artifacts
 
 Training and evaluation refuse to run on a dirty source tree and refuse to write outputs inside `RF-MPC-RL`. Always pass an output folder under `BeyondTorque-Local-Artifacts`.
 
+### University lab PC (Windows, MATLAB R2025b): everything on D:
+
+C: is nearly full. Since 2026-09-16 the canonical workspace has been on D:, and the old C: copy is a stale backup that must not be used (see `RL-MPC-Monitor/docs/project/WORKSPACE_D_TRANSITION.md`). The existing checkouts are:
+
+```
+D:\Energy Efficiency in Legged Robots\WG-Engineering\URE303\
+  RF-MPC-RL\                      (HTTPS origin, last used on branch codex/phase-3-healthy-rl)
+  RL-MPC-Monitor\
+  BeyondTorque-Local-Artifacts\   (outside Git; has the root marker)
+```
+
+- **Do not clone again.** Update the existing D: checkouts: `git fetch origin`, `git switch main` (or `git switch -c main --track origin/main`), `git pull --ff-only`. Keep the local hook setting (`core.hooksPath`).
+- **Every path must be on D:.** That covers the MATLAB current folder, run outputs, the `-logfile`, and the temporary folder. Set `TEMP` and `TMP` to a D: folder for each training process (see section 5).
+- **Check free space on D: before each run.** Full capture uses about 1.2 GB per 320 m episode (section 5).
+- **Before a long run, stop Windows from sleeping or restarting the PC.** Set power to "never sleep", and pause Windows Update or set active hours. A forced restart kills the run, and runs cannot be resumed.
+
 ## 3. Check the installation
 
 From MATLAB, inside `RF-MPC-RL`:
@@ -62,6 +78,21 @@ Launch each run as its own MATLAB process from inside `RF-MPC-RL`. Example for `
 matlab -batch "maxNumCompThreads(1); train_energy_mission_rl(fullfile('..','BeyondTorque-Local-Artifacts','train-w030-s20260903'), struct('mode','train','seed',20260903,'max_episodes',N,'setup_options',struct('time_weight',0.3)))"
 ```
 
+On the Windows lab PC, run in PowerShell from the D: checkout. This starts an independent MATLAB process that keeps running if the editor or terminal closes:
+
+```powershell
+$W = 'D:\Energy Efficiency in Legged Robots\WG-Engineering\URE303'
+$Run = 'train-w063-s20260903-pilot'
+$Out = "$W\BeyondTorque-Local-Artifacts\$Run"
+New-Item -ItemType Directory -Force "$W\BeyondTorque-Local-Artifacts\_tmp\$Run", "$W\BeyondTorque-Local-Artifacts\_logs" | Out-Null
+$env:TEMP = "$W\BeyondTorque-Local-Artifacts\_tmp\$Run"; $env:TMP = $env:TEMP
+Set-Location "$W\RF-MPC-RL"
+Start-Process matlab -ArgumentList @('-logfile', "`"$W\BeyondTorque-Local-Artifacts\_logs\$Run.log`"", '-batch',
+  "`"maxNumCompThreads(1); train_energy_mission_rl('$Out', struct('mode','train','seed',20260903,'max_episodes',20,'setup_options',struct('time_weight',0.63)))`"")
+```
+
+`$Out` must not exist yet; runs never overwrite. While a run is going, do not `git pull`, switch branches or edit files in `RF-MPC-RL`. The run checks at the end that the source is unchanged, and otherwise ends as a failure.
+
 For the other runs, change `time_weight` (0.3 / 0.63 / 0.8), `seed`, and the output folder name (`train-w063-s20260904`, and so on).
 
 **Pilot first:** run one job (`w_time = 0.63`, seed 20260903) before the other eight. Before setting the episode budget `N` for the main runs, the pilot must show:
@@ -73,8 +104,25 @@ Practical notes:
 - The simulator runs on one CPU core: about 3.7–4× slower than simulated time per process on the development laptop (Ryzen 7 5825U). A full 320 m episode at 0.8 m/s (401 s simulated) therefore takes about 25 minutes for a process running alone, and about 35–45 minutes with three processes sharing the laptop.
 - Single-threaded MATLAB (`maxNumCompThreads(1)`) was slightly faster than 8 threads in this test (3.7× vs 4.0×). Run one training process per physical core; do not run more processes than physical cores.
 - A GPU does not speed this up. Almost all time is spent in the CPU simulation (MPC quadratic program, rigid-body integration and the electrical model), which is made of many small sequential computations. The actor and critic networks (two layers of 128 units) are too small for a GPU to matter.
-- A checkpoint is saved after every episode under `<output>/training/checkpoints`.
-- An interrupted run cannot be resumed automatically; it must be restarted.
+### What is logged (nothing from training is discarded)
+
+Measured with a 2-episode × 3-decision training run on `d334622` (validation passed: 3000 rows, 6 rewards and windows reconstructed):
+
+| Where | What | When written |
+|---|---|---|
+| `mpc_steps/` | every 10 ms MPC step: state, command, forces, solver result, battery and drive quantities | continuously, in blocks of about 256 rows |
+| `failures/qp_row_*.mat` | complete QP problems: every solver failure, every dynamic event, the first step, and every 100th step as an audit sample (the folder name does not mean failure) | when it occurs |
+| `decisions/` | each 5 s RL decision: observation, raw and executed action, reward and its terms (`reward_info.standardized_monitor` holds τ and κ) | after each decision |
+| `episodes/` | start and end record of each episode, including the sampled start SOC | at episode start and end |
+| `snapshots/`, `normalized_actions/`, `manifest/` | restore snapshots, action log, source and monitor SHAs, MATLAB release, configuration hash | during the run |
+| `training/checkpoints/AgentN.mat` | actor, critics and optimizer state after episode N, plus `savedAgentResult` (all episode rewards, steps and Q0 so far) | after every episode |
+| `training/console.log`, `_logs/<run>.log` | one line per episode (reward, steps, Q0); full MATLAB output | continuously |
+| `training/final_agent.mat`, `report.json`, `validation.json`, `artifact_sha256.csv` | final agent and statistics, parameter-change checks, dataset validation, hash of every file | at the end |
+| `training/failure.json`, `interrupted_agent.mat` | error, stack and the agent at the moment of a MATLAB error | on error |
+
+- **Not saved in checkpoints: the TD3 replay buffer** (checkpoint buffer length was 0). Every transition is still in `decisions/`, so the buffer can be rebuilt from there. No experience is lost, but a crashed run cannot simply continue; it must be restarted.
+- **Size:** about 3 MB per simulated second, mostly `mpc_steps` (70%) and the QP samples (22%). That is about 1.2 GB per full 320 m episode at 0.8 m/s, about 24 GB for a 20-episode pilot, and about 1.2 TB per 1,000 episodes in total. Check this against free space on D: before setting the campaign budget.
+- **After a run:** register its raw folder with `RL-MPC-Monitor/scripts/local_artifacts.py register` (see `RL-MPC-Monitor/docs/project/LOCAL_ARTIFACT_POLICY.md`). Commit only small summaries to the monitor, never raw MAT files.
 - Memory is about 1.5–2 GB per process.
 
 ## 6. Evaluation after training
