@@ -46,6 +46,7 @@ D:\Energy Efficiency in Legged Robots\WG-Engineering\URE303\
 
 - **Do not clone again.** Update the existing D: checkouts: `git fetch origin`, `git switch main` (or `git switch -c main --track origin/main`), `git pull --ff-only`. Keep the local hook setting (`core.hooksPath`).
 - **Every path must be on D:.** That covers the MATLAB current folder, run outputs, the `-logfile`, and the temporary folder. Set `TEMP` and `TMP` to a D: folder for each training process (see section 5).
+- **`git` must be on the `PATH` of the launched MATLAB process**, not only in the editor's MATLAB session. Without it, a run stops at startup with "Cannot collect Git provenance" (pilot attempt of 2026-11-13). The launch command in section 5 checks this.
 - **Check free space on D: before each run.** Full capture uses about 0.4 GB per 320 m episode (section 5).
 - **Before a long run, stop Windows from sleeping or restarting the PC.** Set power to "never sleep", and pause Windows Update or set active hours. A forced restart kills the run, and runs cannot be resumed.
 
@@ -86,6 +87,11 @@ $Run = 'train-w063-s20260903-pilot'
 $Out = "$W\BeyondTorque-Local-Artifacts\$Run"
 New-Item -ItemType Directory -Force "$W\BeyondTorque-Local-Artifacts\_tmp\$Run", "$W\BeyondTorque-Local-Artifacts\_logs" | Out-Null
 $env:TEMP = "$W\BeyondTorque-Local-Artifacts\_tmp\$Run"; $env:TMP = $env:TEMP
+# git must be on PATH for the new process (runs record source and monitor SHAs).
+# $GitDir is the folder holding git.exe; in MATLAB, system('where git') shows it.
+$GitDir = 'C:\Program Files\Git\cmd'
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { $env:Path = "$GitDir;$env:Path" }
+git --version   # must print a version; otherwise stop
 Set-Location "$W\RF-MPC-RL"
 Start-Process matlab -ArgumentList @('-logfile', "`"$W\BeyondTorque-Local-Artifacts\_logs\$Run.log`"", '-batch',
   "`"maxNumCompThreads(1); train_energy_mission_rl('$Out', struct('mode','train','seed',20260903,'max_episodes',20,'setup_options',struct('time_weight',0.63)))`"")
