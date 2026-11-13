@@ -4,6 +4,8 @@ function report = train_energy_mission_rl(outputRoot,options)
 % A shorter max_steps_per_episode is a diagnostic truncation, not a complete
 % mission or a performance result. No legacy worker MAT or actor is reused.
     if nargin < 2, options=struct(); end
+    assert(~isMATLABReleaseOlderThan("R2025b"),'train_energy_mission_rl:Release', ...
+        'MATLAB R2025b or newer is required (found %s).',version('-release'));
     source = bootstrap_RF_MPC_RL();
     options = localOptions(options);
     sourceStart = localSourceState(source);

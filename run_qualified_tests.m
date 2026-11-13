@@ -3,6 +3,9 @@ function results = run_qualified_tests()
 % The full tests/ folder also holds legacy tests that need local-only files
 % (e.g. rlEnv_MPC_R.mat); they are not part of this qualification.
 % Run from a clean checkout: one pack-sizing test refuses a dirty tree.
+assert(~isMATLABReleaseOlderThan("R2025b"),'run_qualified_tests:Release', ...
+    'MATLAB R2025b or newer is required (found %s).',version('-release'));
+fprintf('MATLAB %s\n',version);
 bootstrap_RF_MPC_RL();
 suites = {
     'testAttitudeTelemetry'

@@ -2,7 +2,10 @@
 
 ## 1. Requirements
 
-- MATLAB **R2026a** (26.1). Other releases are untested.
+- MATLAB **R2025b or newer**. Training and `run_qualified_tests` stop with an error on older releases.
+  - Development and the reward constants (charge floor 637.573 As, span 78.17 As) used R2026a.
+  - R2025b is the university PC's release. No R2026a-only function is used: the TD3, `rlTrainingOptions`, `dlnetwork` layer, `quadprog` and `ode45` calls all exist in R2025b.
+  - The release is written into every run manifest (`matlab_version`). Solver results can differ between releases in the last digits, so `run_qualified_tests` on the university PC is the compatibility check. The pilot's κ range shows whether the charge constants still fit.
 - Toolboxes:
   - Optimization Toolbox (`quadprog`)
   - Reinforcement Learning Toolbox (TD3)
