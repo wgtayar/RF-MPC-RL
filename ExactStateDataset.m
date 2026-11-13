@@ -244,7 +244,7 @@ classdef ExactStateDataset < handle
 end
 
 function value = localGit(root, command)
-    [status, value] = system(sprintf('git -C "%s" %s',root,command));
+    [status, value] = git_output(root, command);
     if status ~= 0
         error('ExactStateDataset:GitUnavailable','Cannot collect Git provenance: %s',value);
     end

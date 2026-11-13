@@ -97,8 +97,8 @@ end
 end
 
 function s=localSource(source)
-[st,sha]=system(sprintf('git -C "%s" rev-parse HEAD',source));assert(st==0);
-[~,br]=system(sprintf('git -C "%s" branch --show-current',source));
-[~,status]=system(sprintf('git -C "%s" status --porcelain',source));
+[st,sha]=git_output(source,'rev-parse HEAD');assert(st==0);
+[~,br]=git_output(source,'branch --show-current');
+[~,status]=git_output(source,'status --porcelain');
 s=struct('sha',strtrim(sha),'branch',strtrim(br),'status',strtrim(status));s.dirty=~isempty(s.status);
 end

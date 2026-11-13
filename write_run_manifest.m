@@ -145,8 +145,7 @@ function value = localGet(s, fields, defaultValue)
 end
 
 function value = localGit(rootDir, arguments)
-    command = sprintf('git -C "%s" %s', rootDir, arguments);
-    [status, output] = system(command);
+    [status, output] = git_output(rootDir, arguments);
     if status == 0
         value = strtrim(output);
     else

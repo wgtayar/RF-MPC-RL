@@ -46,7 +46,7 @@ D:\Energy Efficiency in Legged Robots\WG-Engineering\URE303\
 
 - **Do not clone again.** Update the existing D: checkouts: `git fetch origin`, `git switch main` (or `git switch -c main --track origin/main`), `git pull --ff-only`. Keep the local hook setting (`core.hooksPath`).
 - **Every path must be on D:.** That covers the MATLAB current folder, run outputs, the `-logfile`, and the temporary folder. Set `TEMP` and `TMP` to a D: folder for each training process (see section 5).
-- **`git` must be on the `PATH` of the launched MATLAB process**, not only in the editor's MATLAB session. Without it, a run stops at startup with "Cannot collect Git provenance" (pilot attempt of 2026-11-13). The launch command in section 5 checks this.
+- **`git` must be on the `PATH` of the launched MATLAB process.** The launch command in section 5 checks this. On 2026-11-13 two pilot attempts stopped at startup with "Cannot collect Git provenance". In a process started with `Start-Process`, MATLAB's `system()` (through `cmd.exe`) could not find git, although Java could. Since then all run provenance calls start git directly through `git_output.m`, without a shell.
 - **Check free space on D: before each run.** Full capture uses about 0.4 GB per 320 m episode (section 5).
 - **Before a long run, stop Windows from sleeping or restarting the PC.** Set power to "never sleep", and pause Windows Update or set active hours. A forced restart kills the run, and runs cannot be resumed.
 

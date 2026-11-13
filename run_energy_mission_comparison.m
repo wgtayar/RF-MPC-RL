@@ -96,7 +96,7 @@ catch e
 end
 end
 function v=gitValue(root,args)
-[s,v]=system(sprintf('git -C "%s" %s',root,args));assert(s==0);v=strtrim(v);
+[s,v]=git_output(root,args);assert(s==0);v=strtrim(v);
 end
 function writeJson(root,name,value)
 f=fopen(fullfile(root,[name '.json']),'w');assert(f>=0);c=onCleanup(@()fclose(f));fprintf(f,'%s\n',jsonencode(value,'PrettyPrint',true));
