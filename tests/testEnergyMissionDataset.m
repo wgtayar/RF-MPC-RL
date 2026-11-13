@@ -65,6 +65,14 @@ classdef testEnergyMissionDataset < matlab.unittest.TestCase
             tc.verifyError(@()validate_exact_state_dataset(root), ...
                 'validate_exact_state_dataset:EnergyChunkLink');
         end
+        function windowsSeparatorsInIndexAreAccepted(tc)
+            % Datasets written on Windows record paths with backslashes.
+            root=clone(tc); indexPath=fullfile(root,'checksums','files.csv');
+            index=readtable(indexPath,'TextType','string');
+            index.file=replace(index.file,'/','\'); writetable(index,indexPath);
+            report=validate_exact_state_dataset(root);
+            tc.verifyTrue(report.valid);
+        end
         function decisionElectricalStateMustMatchPhysicalRows(tc)
             root=clone(tc); relative=decisionPath();
             event=readEvent(root,relative);
@@ -90,7 +98,7 @@ save(fullfile(root,relative),'event','-v7.3'); rehashFile(root,relative);
 end
 function rehashFile(root,relative)
 path=fullfile(root,relative); indexPath=fullfile(root,'checksums','files.csv');
-index=readtable(indexPath,'TextType','string'); row=index.file==string(relative);
+index=readtable(indexPath,'TextType','string'); row=replace(index.file,'\','/')==string(relative);
 assert(nnz(row)==1); details=dir(path);
 index.bytes(row)=details.bytes; index.sha256(row)=string(sha256_file(path));
 writetable(index,indexPath);

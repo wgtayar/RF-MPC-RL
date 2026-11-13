@@ -281,6 +281,7 @@ function target = localReference(root, reference, verifiedHashes)
 end
 
 function target = localArtifact(root, relative)
+    relative = replace(string(relative),'\','/');   % indices written on Windows
     [exists, attributes] = fileattrib(fullfile(root,relative));
     assert(exists, 'validate_exact_state_dataset:MissingArtifact','Referenced artifact is missing.');
     target = attributes.Name;
