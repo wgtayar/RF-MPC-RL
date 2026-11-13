@@ -46,7 +46,7 @@ D:\Energy Efficiency in Legged Robots\WG-Engineering\URE303\
 
 - **Do not clone again.** Update the existing D: checkouts: `git fetch origin`, `git switch main` (or `git switch -c main --track origin/main`), `git pull --ff-only`. Keep the local hook setting (`core.hooksPath`).
 - **Every path must be on D:.** That covers the MATLAB current folder, run outputs, the `-logfile`, and the temporary folder. Set `TEMP` and `TMP` to a D: folder for each training process (see section 5).
-- **Check free space on D: before each run.** Full capture uses about 1.2 GB per 320 m episode (section 5).
+- **Check free space on D: before each run.** Full capture uses about 0.4 GB per 320 m episode (section 5).
 - **Before a long run, stop Windows from sleeping or restarting the PC.** Set power to "never sleep", and pause Windows Update or set active hours. A forced restart kills the run, and runs cannot be resumed.
 
 ## 3. Check the installation
@@ -106,7 +106,7 @@ Practical notes:
 - A GPU does not speed this up. Almost all time is spent in the CPU simulation (MPC quadratic program, rigid-body integration and the electrical model), which is made of many small sequential computations. The actor and critic networks (two layers of 128 units) are too small for a GPU to matter.
 ### What is logged (nothing from training is discarded)
 
-Measured with a 2-episode × 3-decision training run on `d334622` (validation passed: 3000 rows, 6 rewards and windows reconstructed):
+Measured with a 2-episode × 3-decision training run on `b7c3739` (validation passed: 3000 rows, 6 rewards and windows reconstructed):
 
 | Where | What | When written |
 |---|---|---|
@@ -121,7 +121,7 @@ Measured with a 2-episode × 3-decision training run on `d334622` (validation pa
 | `training/failure.json`, `interrupted_agent.mat` | error, stack and the agent at the moment of a MATLAB error | on error |
 
 - **Not saved in checkpoints: the TD3 replay buffer** (checkpoint buffer length was 0). Every transition is still in `decisions/`, so the buffer can be rebuilt from there. No experience is lost, but a crashed run cannot simply continue; it must be restarted.
-- **Size:** about 3 MB per simulated second, mostly `mpc_steps` (70%) and the QP samples (22%). That is about 1.2 GB per full 320 m episode at 0.8 m/s, about 24 GB for a 20-episode pilot, and about 1.2 TB per 1,000 episodes in total. Check this against free space on D: before setting the campaign budget.
+- **Size:** captures are written as compressed MAT files (`-v7`), with every row and value kept. That is about 1 MB per simulated second; it was 3 MB with the earlier uncompressed `-v7.3` files. `mpc_steps` is 87% of it, and the QP samples are 3%. That gives about 0.4 GB per full 320 m episode at 0.8 m/s, about 8 GB for a 20-episode pilot, and about 0.4 TB per 1,000 episodes in total, plus about 0.33 MB of checkpoint per episode. Check this against free space on D: before setting the campaign budget. If space is still short, the next lever is the QP audit interval (`ExactStateDataset.AuditInterval`, now 100). Thinning the 10 ms rows would break reward reconstruction and validation.
 - **After a run:** register its raw folder with `RL-MPC-Monitor/scripts/local_artifacts.py register` (see `RL-MPC-Monitor/docs/project/LOCAL_ARTIFACT_POLICY.md`). Commit only small summaries to the monitor, never raw MAT files.
 - Memory is about 1.5–2 GB per process.
 
