@@ -46,7 +46,7 @@ classdef ExactStateDataset < handle
                 {'file','first_row','last_row','row_count','bytes','sha256'});
             writetable(index,fullfile(obj.Root,'mpc_steps','index.csv'));
             configPath = fullfile(obj.Root, 'manifest', 'configuration.mat');
-            save(configPath, 'cfg', '-v7.3');
+            save(configPath, 'cfg', '-v7');
             source = fileparts(mfilename('fullpath'));
             manifest = metadata;
             manifest.dataset_schema_version = 'dynamic_state_v2';
@@ -69,7 +69,7 @@ classdef ExactStateDataset < handle
             manifest.configuration_hash_kind = 'sha256_of_archived_mat_file_bytes';
             obj.Manifest = manifest;
             obj.RewardEnabled = strcmp(manifest.reward_version,'reward_phase3_coverage_candidate_v1');
-            save(fullfile(obj.Root,'manifest','run.mat'), 'manifest', '-v7.3');
+            save(fullfile(obj.Root,'manifest','run.mat'), 'manifest', '-v7');
         end
         function beginSegment(obj, state, context, parameters, control)
             obj.requireOpen();
@@ -90,7 +90,7 @@ classdef ExactStateDataset < handle
             relative = sprintf('snapshots/segment_%06d_before.mat', obj.Segment);
             snapshot = struct('state',state,'context',context,'parameters',parameters, ...
                 'control',control,'configuration_sha256',obj.Manifest.configuration_sha256);
-            save(fullfile(obj.Root,relative), 'snapshot', '-v7.3');
+            save(fullfile(obj.Root,relative), 'snapshot', '-v7');
             obj.SnapshotReference = struct('file',relative, ...
                 'sha256',sha256_file(fullfile(obj.Root,relative)));
         end
@@ -125,7 +125,7 @@ classdef ExactStateDataset < handle
                     'row_id',row.row_id,'source_sha',row.source_sha, ...
                     'configuration_sha256',row.configuration_sha256, ...
                     'Xt',row.Xt_qp,'Ut',row.Ut_qp,'Xd',row.Xd,'Ud',row.Ud);
-                save(fullfile(obj.Root,relative), 'exactQP', '-v7.3');
+                save(fullfile(obj.Root,relative), 'exactQP', '-v7');
                 row.qp_reference = struct('file',relative, ...
                     'sha256',sha256_file(fullfile(obj.Root,relative)));
             end
@@ -143,7 +143,7 @@ classdef ExactStateDataset < handle
             obj.flush();
             snapshot = struct('state',state,'outcome',outcome,'context',obj.Context);
             filename = sprintf('segment_%06d_after.mat',obj.Segment);
-            save(fullfile(obj.Root,'snapshots',filename), 'snapshot', '-v7.3');
+            save(fullfile(obj.Root,'snapshots',filename), 'snapshot', '-v7');
         end
         function exposure = decisionRewardExposure(obj,firstRow,lastRow)
             obj.requireOpen();
@@ -188,7 +188,7 @@ classdef ExactStateDataset < handle
                 error('ExactStateDataset:Exists', 'Refusing to overwrite %s.',target);
             end
             packed_rows = pack_exact_state_rows(rows);
-            save(target,'packed_rows','-v7.3');
+            save(target,'packed_rows','-v7');
             info = dir(target);
             obj.Index(end+1,:) = {relative,first,last,obj.Count,info.bytes,sha256_file(target)};
             index = cell2table(obj.Index,'VariableNames', ...
@@ -233,7 +233,7 @@ classdef ExactStateDataset < handle
                 'source_sha',obj.Manifest.source_sha, ...
                 'configuration_sha256',obj.Manifest.configuration_sha256, ...
                 'context',context,'record',record);
-            save(target,'event','-v7.3');
+            save(target,'event','-v7');
         end
         function requireOpen(obj)
             if obj.Closed
