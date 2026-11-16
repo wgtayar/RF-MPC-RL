@@ -101,6 +101,21 @@ Start-Process matlab -ArgumentList @('-logfile', "`"$W\BeyondTorque-Local-Artifa
 
 For the other runs, change `time_weight` (0.3 / 0.63 / 0.8), `seed`, and the output folder name (`train-w063-s20260904`, and so on).
 
+**Continuing a run in tranches (`resume_from`).** A finished, validated run can be continued in a new output folder:
+
+```matlab
+train_energy_mission_rl('<artifacts>\train-w063-s20260903-t2', struct('mode','train','seed',20260903, ...
+    'max_episodes',70,'setup_options',struct('time_weight',0.63), ...
+    'resume_from','<artifacts>\train-w063-s20260903-t1'))
+```
+
+- The new run starts from the previous run's final agent: actor, critics, target networks and optimizer state. It also continues the previous run's random stream, so the start-SOC sequence carries on instead of repeating.
+- The replay memory is reloaded. Runs since this change save it as `training/replay_buffer.mat`. Older runs, such as tranche 1 on `0ee1ad1`, have it rebuilt from `decisions/` and `normalized_actions/`. The rebuild matches the toolbox's own replay memory exactly (`testEnergyMissionResume`).
+- The loaded transitions count toward TD3's warm-up, so learning continues at once.
+- `seed`, `setup_options`, `agent_options`, `environment_options` and `max_steps_per_episode` must be the same as in the previous run; otherwise it stops before writing anything. The source commit may differ. Both commits are recorded under `resumed_from` in the manifest and the report.
+- `report.json` gives this tranche's `episodes_trained` and the totals `cumulative_episodes_trained` and `cumulative_training_decisions`. Episode numbers in the new folder start at 1 again.
+- The previous run's folder is only read, never changed. Keep it: it holds the earlier episodes' evidence.
+
 **Pilot first:** run one job (`w_time = 0.63`, seed 20260903) before the other eight. Before setting the episode budget `N` for the main runs, the pilot must show:
 - training well beyond TD3's 64-transition warm-up, with the actor and both critic parameters actually changing (`report.json`: `actor_parameters_changed`, `critic_parameters_changed`);
 - `kappa_cumulative` at completed episodes staying within about [0, 1]. It is stored in each decision record under `reward_info.standardized_monitor`. If it does not, the 78.17 As charge span must be revised before the main runs;

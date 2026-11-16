@@ -32,7 +32,14 @@ function report = train_energy_mission_rl(outputRoot,options)
     settings = energy_mission_agent_options(options.agent_options);
     bundle.cfg.TRAIN = settings;
     bundle.cfg.TRAIN.run_options = options;
-    rng(options.seed,'twister');
+    resume = [];
+    if ~isempty(options.resume_from)
+        assert(training,'train_energy_mission_rl:ResumeMode','Only mode=train can resume.');
+        resume = localResume(options);
+        rng(resume.final_rng);   % continue the random stream of the previous run
+    else
+        rng(options.seed,'twister');
+    end
     initialRng = rng;
     [~,runId] = fileparts(outputRoot);
     metadata = struct('run_id',runId,'run_type','energy_mission_td3_training_interface_v1', ...
@@ -43,7 +50,8 @@ function report = train_energy_mission_rl(outputRoot,options)
         'learning_rates_configured',[settings.actor_learn_rate settings.critic_learn_rate], ...
         'exploration_standard_deviation_configured_normalized',settings.exploration_standard_deviation, ...
         'learning_rates_used',[],'exploration_noise_used',[], ...
-        'source_start',sourceStart);
+        'source_start',sourceStart,'resumed_from',[]);
+    if ~isempty(resume), metadata.resumed_from = resume.provenance; end
     if training
         metadata.learning_rates_used = metadata.learning_rates_configured;
         metadata.exploration_noise_used = struct('type','independent_gaussian_normalized', ...
@@ -62,6 +70,15 @@ function report = train_energy_mission_rl(outputRoot,options)
         save(fullfile(trainingDir,'request.mat'),'options','initialRng','metadata');
         [agent,agentSpec] = create_energy_mission_agent(getObservationInfo(env), ...
             getActionInfo(env),bundle.cfg,options.agent_options);
+        if ~isempty(resume)
+            assert(isequaln(agentSpec,resume.agent_spec),'train_energy_mission_rl:ResumeAgent', ...
+                'The previous run used a different agent specification.');
+            agent = resume.agent;
+            append(agent.ExperienceBuffer,resume.experiences);
+            assert(agent.ExperienceBuffer.Length == numel(resume.experiences), ...
+                'train_energy_mission_rl:ResumeReplay','The replay memory could not hold every previous transition.');
+            resume = rmfield(resume,{'agent','experiences'});
+        end
         before = localParameters(agent);
         save(fullfile(trainingDir,'initial_agent.mat'),'agent','agentSpec','initialRng','-v7.3');
         localJson(fullfile(trainingDir,'agent_specification.json'),agentSpec);
@@ -78,6 +95,9 @@ function report = train_energy_mission_rl(outputRoot,options)
                 'SaveAgentDirectory',fullfile(trainingDir,'checkpoints'));
             save(fullfile(trainingDir,'training_options.mat'),'trainOptions');
             stats = train(agent,env,trainOptions);
+            % Saved agents carry an empty replay memory; keep it explicitly.
+            experiences = allExperiences(agent.ExperienceBuffer); %#ok<NASGU>
+            save(fullfile(trainingDir,'replay_buffer.mat'),'experiences','-v7.3');
             episodes = numel(stats.EpisodeIndex);
             if episodes>0, steps=stats.TotalAgentSteps(end); end
         end
@@ -105,6 +125,9 @@ function report = train_energy_mission_rl(outputRoot,options)
             'actor_parameters_changed',~isequaln(before.actor,after.actor), ...
             'critic_parameters_changed',[~isequaln(before.critic1,after.critic1) ...
                 ~isequaln(before.critic2,after.critic2)], ...
+            'resumed_from',metadata.resumed_from, ...
+            'cumulative_episodes_trained',episodes+localPrevious(metadata,'cumulative_episodes_trained'), ...
+            'cumulative_training_decisions',steps+localPrevious(metadata,'cumulative_training_decisions'), ...
             'performance_tuned',false,'training_promoted',false, ...
             'wall_clock_seconds',toc(wallClock),'outcome',[options.mode '_complete']);
         save(fullfile(trainingDir,'final_agent.mat'),'agent','agentSpec','stats','finalRng','-v7.3');
@@ -176,7 +199,7 @@ end
 function options = localOptions(options)
     defaults = struct('mode','build_only','setup_options',struct(),'seed',[], ...
         'max_episodes',1,'max_steps_per_episode',[],'agent_options',struct(), ...
-        'environment_options',struct());
+        'environment_options',struct(),'resume_from','');
     assert(isstruct(options) && isscalar(options) && ...
         all(ismember(fieldnames(options),fieldnames(defaults))), ...
         'train_energy_mission_rl:Options','Unknown training option.');
@@ -199,6 +222,54 @@ function options = localOptions(options)
     end
     validateattributes(options.setup_options,{'struct'},{'scalar'});
     validateattributes(options.environment_options,{'struct'},{'scalar'});
+end
+
+function resume = localResume(options)
+% Continue a completed, validated training run: its final agent (networks,
+% target networks and optimizer state), its replay memory and its random
+% stream. The configuration must be the same; only the source may differ.
+    previous = char(java.io.File(char(options.resume_from)).getCanonicalPath());
+    checkpoint = load_energy_mission_checkpoint(previous);   % hashes, completion, clean source
+    trainingDir = fullfile(previous,'training');
+    validation = load(fullfile(trainingDir,'validation.mat'),'validation').validation;
+    assert(validation.valid,'train_energy_mission_rl:ResumeInvalid','The previous run did not validate.');
+    request = load(fullfile(trainingDir,'request.mat'),'options').options;
+    same = {'seed','setup_options','agent_options','environment_options','max_steps_per_episode'};
+    for k = 1:numel(same)
+        assert(isequaln(request.(same{k}),options.(same{k})), ...
+            'train_energy_mission_rl:ResumeOptions', ...
+            'Option %s differs from the run being continued.',same{k});
+    end
+    saved = load(fullfile(trainingDir,'final_agent.mat'),'agent','agentSpec','finalRng');
+    replayFile = fullfile(trainingDir,'replay_buffer.mat');
+    if isfile(replayFile)
+        experiences = load(replayFile,'experiences').experiences;
+        origin = 'saved_replay_buffer';
+    else
+        experiences = rebuild_energy_mission_replay(previous,options.max_steps_per_episode);
+        origin = 'rebuilt_from_decisions';
+    end
+    report = jsondecode(fileread(fullfile(trainingDir,'report.json')));
+    assert(numel(experiences) == localCumulative(report,'training_decisions'), ...
+        'train_energy_mission_rl:ResumeReplay', ...
+        'Replay transitions (%d) differ from the decisions trained so far.',numel(experiences));
+    resume = struct('agent',saved.agent,'agent_spec',saved.agentSpec, ...
+        'final_rng',saved.finalRng,'experiences',experiences);
+    resume.provenance = struct('run_root',previous,'run_id',report.run_id, ...
+        'source_sha',report.source_sha, ...
+        'final_agent_sha256',checkpoint.sha256, ...
+        'replay_origin',origin,'replay_transitions',numel(experiences), ...
+        'cumulative_episodes_trained',localCumulative(report,'episodes_trained'), ...
+        'cumulative_training_decisions',localCumulative(report,'training_decisions'));
+end
+
+function value = localCumulative(report,name)
+    if isfield(report,['cumulative_' name]), value = report.(['cumulative_' name]);
+    else, value = report.(name); end
+end
+
+function value = localPrevious(metadata,name)
+    if isempty(metadata.resumed_from), value = 0; else, value = metadata.resumed_from.(name); end
 end
 
 function parameters = localParameters(agent)
