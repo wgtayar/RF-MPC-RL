@@ -116,6 +116,20 @@ train_energy_mission_rl('<artifacts>\train-w063-s20260903-t2', struct('mode','tr
 - `report.json` gives this tranche's `episodes_trained` and the totals `cumulative_episodes_trained` and `cumulative_training_decisions`. Episode numbers in the new folder start at 1 again.
 - The previous run's folder is only read, never changed. Keep it: it holds the earlier episodes' evidence.
 
+**Learning summary of a finished run.** This reads a run folder (never writes to it) and writes a small summary folder, a few MB per 70 episodes, that can be copied to another PC for analysis:
+
+```matlab
+export_energy_mission_training_summary('<artifacts>\train-w063-s20260903-t1', '<artifacts>\summaries\train-w063-s20260903-t1')
+plot_energy_mission_training_summary({'<artifacts>\summaries\train-w063-s20260903-t1','<artifacts>\summaries\train-w063-s20260903-t2'}, '<artifacts>\summaries\figures')
+```
+
+- `decisions.csv`: one row per 5 s decision. It holds the requested normalized action, the applied speed and acceleration gains, executed speed, the reward and its four terms (progress, time, charge, terminal), τ and κ, SOC, charge, energy, pack voltage, current and power, drive voltage headroom, voltage and torque limit steps, tilt, body rate, and QP count and feasibility.
+- `episodes.csv`: one row per episode. It holds initial and end SOC, end reason, return and its four components, the toolbox EpisodeReward and Q0, final τ and κ, charge, energy, speed statistics, minimum drive headroom, limit steps, infeasible decisions and wall-clock minutes.
+- `policy_probe.csv`: the deterministic actor action and both critic values of every saved checkpoint, at fixed probe states (the first observation of each episode). It shows how the policy changes between episodes.
+- `transitions.mat`: observation, next observation, normalized action, reward and done flag for every decision.
+- The plots show learning curves for each run, a figure comparing runs, and figures of SOC-dependent behaviour. Give the -t1 and -t2 summaries of a run in that order; their episodes are then numbered as one continuous run.
+- Exporting a 70-episode run takes about one decision file per few milliseconds plus one checkpoint load per episode. Expect minutes, not hours. It is single-threaded and can run alongside training.
+
 **Pilot first:** run one job (`w_time = 0.63`, seed 20260903) before the other eight. Before setting the episode budget `N` for the main runs, the pilot must show:
 - training well beyond TD3's 64-transition warm-up, with the actor and both critic parameters actually changing (`report.json`: `actor_parameters_changed`, `critic_parameters_changed`);
 - `kappa_cumulative` at completed episodes staying within about [0, 1]. It is stored in each decision record under `reward_info.standardized_monitor`. If it does not, the 78.17 As charge span must be revised before the main runs;

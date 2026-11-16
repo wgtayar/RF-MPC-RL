@@ -76,5 +76,31 @@ classdef testEnergyMissionResume < matlab.unittest.TestCase
                 'train_energy_mission_rl:ResumeOptions');
             tc.verifyFalse(isfolder(fullfile(tc.Folder,'t2-bad')));
         end
+        function trainingSummaryMatchesRun(tc)
+            % The exported return, rebuilt from its four reward terms, equals the
+            % toolbox episode reward; the run folder is left unchanged.
+            before=dir(fullfile(tc.First,'**','*'));
+            out=fullfile(tc.Folder,'summary-t1');
+            summary=export_energy_mission_training_summary(tc.First,out);
+            tc.verifyEqual(summary.decisions,6);
+            tc.verifyEqual(summary.probe_checkpoints,2);
+            E=readtable(fullfile(out,'episodes.csv'),'TextType','string');
+            D=readtable(fullfile(out,'decisions.csv'),'TextType','string');
+            tc.verifyEqual(E.episode_return,E.toolbox_episode_reward,'AbsTol',1e-12);
+            tc.verifyEqual(D.r_progress+D.r_time+D.r_charge+D.r_terminal,D.reward,'AbsTol',1e-12);
+            tc.verifyEqual(E.end_reason,["step_limit";"step_limit"]);
+            replay=load(fullfile(tc.First,'training','replay_buffer.mat'),'experiences').experiences;
+            x=load(fullfile(out,'transitions.mat'));
+            tc.verifyEqual(x.rewards,[replay.Reward]);
+            stored=[replay.Action]; tc.verifyEqual(x.actions,double([stored{:}]),'AbsTol',1e-12);
+            after=dir(fullfile(tc.First,'**','*'));
+            tc.verifyEqual({after.name},{before.name});
+            tc.verifyEqual([after.bytes],[before.bytes]);
+            tc.verifyError(@() export_energy_mission_training_summary(tc.First,out), ...
+                'export_energy_mission_training_summary:OutputExists');
+            files=plot_energy_mission_training_summary({out},fullfile(tc.Folder,'figures'));
+            tc.verifyEqual(numel(files),3);
+            tc.verifyTrue(all(cellfun(@isfile,files)));
+        end
     end
 end
