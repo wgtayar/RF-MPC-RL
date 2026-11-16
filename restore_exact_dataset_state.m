@@ -2,7 +2,7 @@ function [state, control, parameters] = restore_exact_dataset_state(root, rowId)
 %restore_exact_dataset_state Restore the state BEFORE FSM processing at rowId.
     validateattributes(rowId,{'numeric'},{'scalar','positive','integer'});
     validate_exact_state_dataset(root);
-    index = readtable(fullfile(root,'mpc_steps','index.csv'),'TextType','string');
+    index = read_index_csv(fullfile(root,'mpc_steps','index.csv'),{'file','first_row','last_row','row_count','bytes','sha256'},{'string','double','double','double','double','string'});
     fileIndex = find(index.first_row <= rowId & index.last_row >= rowId,1);
     if isempty(fileIndex)
         error('restore_exact_dataset_state:MissingRow','Requested MPC row does not exist.');

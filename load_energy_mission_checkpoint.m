@@ -8,7 +8,7 @@ assert(strcmp(folder,'training') && strcmp(ext,'.mat') && ismember(name,{'initia
  'energyPolicy:Checkpoint','Use a completed capture training/initial_agent.mat or training/final_agent.mat.');
 indexPath=fullfile(trainingFolder,'artifact_sha256.csv');
 assert(isfile(indexPath),'energyPolicy:ArtifactIndex','Completed artifact index is required.');
-index=readtable(indexPath,'TextType','string');
+index=read_index_csv(indexPath,{'file','bytes','sha256'},{'string','double','string'});
 required={['training/' name ext],'manifest/configuration.mat','manifest/run.mat', ...
  'manifest/completion.mat','training/report.json','training/agent_specification.json'};
 hashes=struct();

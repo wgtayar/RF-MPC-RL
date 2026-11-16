@@ -10,7 +10,7 @@ function report = validate_exact_state_dataset(root,reconstructWindows)
     [exists, attributes] = fileattrib(root);
     assert(exists, 'validate_exact_state_dataset:MissingRoot', 'Dataset root is absent.');
     root = attributes.Name;
-    files = readtable(fullfile(root,'checksums','files.csv'),'TextType','string');
+    files = read_index_csv(fullfile(root,'checksums','files.csv'),{'file','bytes','sha256'},{'string','double','string'});
     verifiedHashes = containers.Map('KeyType','char','ValueType','char');
     for k = 1:height(files)
         target = localArtifact(root,files.file(k));
@@ -45,7 +45,7 @@ function report = validate_exact_state_dataset(root,reconstructWindows)
             energy_mission_scales(cfg);
         end
     end
-    index = readtable(fullfile(root,'mpc_steps','index.csv'),'TextType','string');
+    index = read_index_csv(fullfile(root,'mpc_steps','index.csv'),{'file','first_row','last_row','row_count','bytes','sha256'},{'string','double','double','double','double','string'});
     previous = [];
     count = 0;
     qpCount = 0;

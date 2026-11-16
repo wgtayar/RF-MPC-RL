@@ -68,10 +68,21 @@ classdef testEnergyMissionDataset < matlab.unittest.TestCase
         function windowsSeparatorsInIndexAreAccepted(tc)
             % Datasets written on Windows record paths with backslashes.
             root=clone(tc); indexPath=fullfile(root,'checksums','files.csv');
-            index=readtable(indexPath,'TextType','string');
+            index=read_index_csv(indexPath,{'file','bytes','sha256'},{'string','double','string'});
             index.file=replace(index.file,'/','\'); writetable(index,indexPath);
             report=validate_exact_state_dataset(root);
             tc.verifyTrue(report.valid);
+        end
+        function largeWindowsIndexKeepsItsHeader(tc)
+            % readtable's automatic detection read such a file as Var1..Var4.
+            path=fullfile(tc.Folder,'large_files.csv'); n=18000;
+            folders=["mpc_steps","decisions","failures","snapshots"];
+            file=compose("%s\\item_%06d.mat",folders(mod((1:n)'-1,4)+1)',(1:n)');
+            hashes=string(dec2hex(randi([0 15],n,64),1)); hashes=join(reshape(hashes,n,64),"",2);
+            writetable(table(file,randi(1e6,n,1),lower(hashes),'VariableNames',{'file','bytes','sha256'}),path);
+            index=read_index_csv(path,{'file','bytes','sha256'},{'string','double','string'});
+            tc.verifyEqual(index.Properties.VariableNames,{'file','bytes','sha256'});
+            tc.verifyEqual(height(index),n); tc.verifyEqual(index.file,file);
         end
         function decisionElectricalStateMustMatchPhysicalRows(tc)
             root=clone(tc); relative=decisionPath();
@@ -98,7 +109,7 @@ save(fullfile(root,relative),'event','-v7.3'); rehashFile(root,relative);
 end
 function rehashFile(root,relative)
 path=fullfile(root,relative); indexPath=fullfile(root,'checksums','files.csv');
-index=readtable(indexPath,'TextType','string'); row=replace(index.file,'\','/')==string(relative);
+index=read_index_csv(indexPath,{'file','bytes','sha256'},{'string','double','string'}); row=replace(index.file,'\','/')==string(relative);
 assert(nnz(row)==1); details=dir(path);
 index.bytes(row)=details.bytes; index.sha256(row)=string(sha256_file(path));
 writetable(index,indexPath);

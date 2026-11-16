@@ -1,7 +1,7 @@
 function report=validate_energy_mission_policy_actions(root,actor)
 %VALIDATE_ENERGY_MISSION_POLICY_ACTIONS Reconstruct actor and both action maps.
 s=load(fullfile(root,'manifest','configuration.mat'),'cfg');cfg=s.cfg;
-index=readtable(fullfile(root,'mpc_steps','index.csv'),'TextType','string');
+index=read_index_csv(fullfile(root,'mpc_steps','index.csv'),{'file','first_row','last_row','row_count','bytes','sha256'},{'string','double','double','double','double','string'});
 files=dir(fullfile(root,'decisions','*.mat'));
 for k=1:numel(files)
  s=load(fullfile(files(k).folder,files(k).name),'event');event=s.event;record=event.record;
