@@ -6,7 +6,7 @@ if nargin<1, options=struct(); end
 assert(isstruct(options) && isscalar(options),'energyMission:Options','Options must be a scalar struct.');
 defaults=struct('initial_soc',.95,'target_distance_m',320,'mission_duration_s',600, ...
     'decision_interval_s',5,'time_weight',.63,'seed',20260903, ...
-    'initial_soc_mode','fixed','initial_soc_range',[.30 1]);
+    'initial_soc_mode','fixed','initial_soc_range',[.30 1],'battery_blind',false);
 % Initial SOC (investigator 2026-11-12): fixed starts may lie anywhere in the
 % declared 30-100% range (evaluation grid 30/35/45/60/80/95/100%). Training
 % uses initial_soc_mode='uniform': each episode draws its start uniformly
@@ -43,6 +43,12 @@ validateattributes(options.mission_duration_s,{'double'},{'scalar','real','finit
 validateattributes(options.decision_interval_s,{'double'},{'scalar','real','finite','positive'});
 validateattributes(options.time_weight,{'double'},{'scalar','real','finite','>=',0,'<=',1});
 validateattributes(options.seed,{'double'},{'scalar','integer','nonnegative','<=',2^32-1});
+% Battery-blind ablation (WGT 2026-11-19, #22): the same 87-input agent with
+% every battery-derived observation held at zero (see
+% energy_mission_observation_schema). Plant, reward (true charge), actions,
+% networks and seeds are unchanged; the agent is blind, the objective is not.
+assert(islogical(options.battery_blind) && isscalar(options.battery_blind), ...
+    'energyMission:Options','battery_blind must be a logical scalar.');
 oldRng=rng; cleanup=onCleanup(@()rng(oldRng));
 bundle=setup_RL_MPC('legacy_frozen_v1'); c=bundle.cfg;
 % Plant revision 2026-11-05: swing feet track the continuous Bezier plan

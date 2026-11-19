@@ -101,6 +101,29 @@ classdef testEnergyMissionObjective < matlab.unittest.TestCase
             tc.verifyEqual(o(a.schema.names=="has_voltage_measurement"),0);
             tc.verifyEqual(o(a.schema.names=="has_drive_headroom"),0);
         end
+        function batteryBlindHoldsOnlyBatteryInputsAtZero(tc)
+            [c,state,row,legacy] = observationFixture();
+            w=struct('Ieq_window',4);
+            [o,a]=build_energy_mission_observation(state,legacy,row,c,w);
+            b=c; b.ENERGY_RL.options=struct('battery_blind',true);
+            [ob,ab]=build_energy_mission_observation(state,legacy,row,b,w);
+            mask=ab.schema.battery_mask;
+            tc.verifyEqual(ab.schema.version,'observation_energy_mission_v1_battery_blind');
+            tc.verifyEqual(a.schema.version,'observation_energy_mission_v1');
+            tc.verifyFalse(any(a.schema.battery_mask));
+            tc.verifyEqual(nnz(mask),13);
+            tc.verifySize(ob,[87,1]);
+            tc.verifyEqual(ob(mask),zeros(13,1));
+            tc.verifyEqual(ob(~mask),o(~mask));
+            tc.verifyTrue(any(o(mask)~=0));
+            changed=state; changed.energy.estimate(1)=.31; changed.energy.chargeAs=500;
+            changed.battery.pack_voltage_V=60; changed.battery.drive_voltage_headroom_V=1;
+            row2=row; row2.state_after=changed;
+            tc.verifyEqual(build_energy_mission_observation(changed,legacy,row2,b,struct('Ieq_window',9)),ob);
+            setup=setup_energy_mission_rl(struct('battery_blind',true));
+            tc.verifyEqual(energy_mission_observation_schema(setup.cfg).version,'observation_energy_mission_v1_battery_blind');
+            tc.verifyFalse(energy_mission_observation_schema(setup_energy_mission_rl().cfg).battery_blind);
+        end
         function nonzeroTimeRequiresActualDecisionCurrent(tc)
             [c,state,row,legacy]=observationFixture();
             tc.verifyError(@()build_energy_mission_observation(state,legacy,row,c), ...

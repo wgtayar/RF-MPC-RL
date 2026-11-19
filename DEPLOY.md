@@ -109,12 +109,21 @@ train_energy_mission_rl('<artifacts>\train-w063-s20260903-t2', struct('mode','tr
     'resume_from','<artifacts>\train-w063-s20260903-t1'))
 ```
 
-- The new run starts from the previous run's final agent: actor, critics, target networks and optimizer state. It also continues the previous run's random stream, so the start-SOC sequence carries on instead of repeating.
+- The new run starts from the previous run's final agent: actor, critics, target networks and optimizer state. It also continues the previous run's global random stream (exploration noise and replay sampling). The start-SOC sequence does **not** carry on: it has its own stream seeded from `seed`, so a resumed tranche repeats the previous tranche's start SOCs in the same order (tranche 2, kept by decision).
 - The replay memory is reloaded. Runs since this change save it as `training/replay_buffer.mat`. Older runs, such as tranche 1 on `0ee1ad1`, have it rebuilt from `decisions/` and `normalized_actions/`. The rebuild matches the toolbox's own replay memory exactly (`testEnergyMissionResume`).
 - The loaded transitions count toward TD3's warm-up, so learning continues at once.
 - `seed`, `setup_options`, `agent_options`, `environment_options` and `max_steps_per_episode` must be the same as in the previous run; otherwise it stops before writing anything. The source commit may differ. Both commits are recorded under `resumed_from` in the manifest and the report.
 - `report.json` gives this tranche's `episodes_trained` and the totals `cumulative_episodes_trained` and `cumulative_training_decisions`. Episode numbers in the new folder start at 1 again.
 - The previous run's folder is only read, never changed. Keep it: it holds the earlier episodes' evidence.
+
+**Battery-blind ablation (`battery_blind`).** The same agent, plant, reward and seeds, with every battery-derived input held at zero: estimated SOC, pack current, charge used and the charge forecast, pack voltage, drive-voltage headroom, the three estimated RC voltages and their availability flags (13 of the 87 inputs). The reward still uses the true charge. The agent records the schema `observation_energy_mission_v1_battery_blind`, and evaluation restores it from the run's own configuration.
+
+```matlab
+train_energy_mission_rl('<artifacts>/train-blind-w063-s20260903', struct('mode','train','seed',20260903, ...
+    'max_episodes',70,'setup_options',struct('time_weight',0.63,'battery_blind',true)))
+```
+
+The blind agent still sees the battery's mechanical consequences (executed speed, tracking and solver signals), so the ablation removes battery state, not its effects on motion.
 
 **Learning summary of a finished run.** This reads a run folder (never writes to it) and writes a small summary folder, a few MB per 70 episodes, that can be copied to another PC for analysis:
 

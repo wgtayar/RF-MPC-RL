@@ -44,6 +44,8 @@ function [observation,audit] = build_energy_mission_observation(state,legacyObse
         estimate(2:4);double(isfinite(voltage));double(isfinite(headroom))];
     raw = [raw;electrical];
     assert(numel(raw)==schema.dimension,'energyMission:Dimension','Observation schema mismatch.');
+    rawUnmasked = raw;
+    raw(schema.battery_mask) = 0;   % battery-blind ablation: constant zero inputs
     available = isfinite(raw);
     encoded = raw; encoded(~available)=0;
     observation = asinh(encoded./schema.scales);
@@ -52,7 +54,7 @@ function [observation,audit] = build_energy_mission_observation(state,legacyObse
         'clipped',false(size(raw)),'base_audit',base, ...
         'current_mean_pack_A',current,'forecast_available',hasForecast, ...
         'projected_remaining_charge_As',forecast,'projected_reserve_surplus_As',surplus, ...
-        'true_soc_exposed',false, ...
+        'true_soc_exposed',false,'battery_blind',schema.battery_blind,'raw_unmasked',rawUnmasked, ...
         'normalization_scope','Current uses actual decision Coulombs per second divided by pack 1C; no clipping or safety-rating claim.');
 end
 
