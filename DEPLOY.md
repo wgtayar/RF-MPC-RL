@@ -124,6 +124,10 @@ plot_energy_mission_training_summary({'<artifacts>\summaries\train-w063-s2026090
 ```
 
 - `decisions.csv`: one row per 5 s decision. It holds the requested normalized action, the applied speed and acceleration gains, executed speed, the reward and its four terms (progress, time, charge, terminal), τ and κ, SOC, charge, energy, pack voltage, current and power, drive voltage headroom, voltage and torque limit steps, tilt, body rate, and QP count and feasibility.
+- With `'split_decisions', true` the decision table is written as `decisions-001.csv`, `decisions-002.csv`, ... instead. Each part holds whole episodes and is below `max_file_bytes` (default 1,000,000 bytes), and non-integer numbers are rounded to 6 significant digits (`significant_digits`). Use this when the summary must be published as small files; `transitions.mat` is still written and must not be published. The plots read either form.
+  ```matlab
+  export_energy_mission_training_summary(runFolder, summaryFolder, 'split_decisions', true)
+  ```
 - `episodes.csv`: one row per episode. It holds initial and end SOC, end reason, return and its four components, the toolbox EpisodeReward and Q0, final τ and κ, charge, energy, speed statistics, minimum drive headroom, limit steps, infeasible decisions and wall-clock minutes.
 - `policy_probe.csv`: the deterministic actor action and both critic values of every saved checkpoint, at fixed probe states (the first observation of each episode). It shows how the policy changes between episodes.
 - `transitions.mat`: observation, next observation, normalized action, reward and done flag for every decision.

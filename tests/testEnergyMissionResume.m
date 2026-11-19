@@ -102,5 +102,57 @@ classdef testEnergyMissionResume < matlab.unittest.TestCase
             tc.verifyEqual(numel(files),3);
             tc.verifyTrue(all(cellfun(@isfile,files)));
         end
+        function splitSummaryKeepsWholeEpisodesBelowLimit(tc)
+            % Split decision files hold whole episodes, stay below the byte
+            % limit, and together equal the unsplit table to 6 significant digits.
+            whole=fullfile(tc.Folder,'summary-whole');
+            export_energy_mission_training_summary(tc.First,whole,'probe_checkpoints',false);
+            D=readtable(fullfile(whole,'decisions.csv'),'TextType','string');
+            one=fullfile(tc.Folder,'summary-one');
+            export_energy_mission_training_summary(tc.First,one,'probe_checkpoints',false, ...
+                'split_decisions',true);
+            tc.verifyFalse(isfile(fullfile(one,'decisions.csv')));
+            single=dir(fullfile(one,'decisions-*.csv'));
+            tc.verifyEqual({single.name},{'decisions-001.csv'});
+            % A limit that fits one episode but not two gives one file per episode.
+            fid=fopen(fullfile(one,'decisions-001.csv'),'r'); bytes=fread(fid,Inf,'*uint8')'; fclose(fid);
+            ends=find(bytes==uint8(10));
+            tc.assertNumElements(ends,height(D)+1);
+            header=ends(1); rowBytes=diff(ends(:));
+            perEpisode=arrayfun(@(e) sum(rowBytes(D.episode==e)),unique(D.episode));
+            limit=header+max(perEpisode)+1;
+            tc.assumeLessThan(limit,header+sum(perEpisode));
+            out=fullfile(tc.Folder,'summary-split');
+            evalc(['summary=export_energy_mission_training_summary(tc.First,out,' ...
+                '''probe_checkpoints'',false,''split_decisions'',true,''max_file_bytes'',limit);']);
+            parts=dir(fullfile(out,'decisions-*.csv'));
+            tc.verifyEqual({parts.name},{'decisions-001.csv','decisions-002.csv'});
+            tc.verifyLessThan([parts.bytes],limit);
+            tc.verifyEqual(summary.decision_files,{'decisions-001.csv','decisions-002.csv'});
+            tc.verifyEqual(summary.decisions,height(D));
+            P=cell(numel(parts),1);
+            for k=1:numel(parts)
+                P{k}=readtable(fullfile(out,parts(k).name),'TextType','string');
+                tc.verifyNumElements(unique(P{k}.episode),1);
+            end
+            S=vertcat(P{:});
+            tc.verifyEqual(S.episode,D.episode);
+            tc.verifyEqual(S.decision,D.decision);
+            tc.verifyEqual(S.reward,D.reward,'RelTol',1e-5);
+            tc.verifyEqual(S.soc_end_pct,D.soc_end_pct,'RelTol',1e-5);
+            tc.verifyEqual(S.qp_solves,D.qp_solves);
+            % A limit below one episode is refused.
+            tc.verifyError(@() export_energy_mission_training_summary(tc.First, ...
+                fullfile(tc.Folder,'summary-tiny'),'probe_checkpoints',false, ...
+                'split_decisions',true,'max_file_bytes',header+10), ...
+                'export_energy_mission_training_summary:EpisodeTooLarge');
+            % The plots read the split files.
+            files=plot_energy_mission_training_summary({out},fullfile(tc.Folder,'figures-split'));
+            tc.verifyEqual(numel(files),3);
+            for k=1:numel(files)
+                info=dir(files{k});
+                tc.verifyLessThan(info.bytes,1e6,files{k});
+            end
+        end
     end
 end

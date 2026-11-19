@@ -43,7 +43,7 @@ function files = plot_energy_mission_training_summary(summaryDirs, outputDir)
     legend(axes3,'Location','eastoutside','Interpreter','none');
     ylim(axes1,[0 1]);
     files{end+1} = fullfile(outputDir,'overview.png');
-    exportgraphics(overview,files{end},'Resolution',110); close(overview);
+    localExport(overview,files{end}); close(overview);
 end
 
 function runs = localGroup(dirs)
@@ -52,7 +52,7 @@ function runs = localGroup(dirs)
         summary = jsondecode(fileread(fullfile(dirs{k},'summary.json')));
         base = regexprep(summary.run_id,'-t\d+$','');
         E = readtable(fullfile(dirs{k},'episodes.csv'),'TextType','string');
-        D = readtable(fullfile(dirs{k},'decisions.csv'),'TextType','string');
+        D = localReadDecisions(dirs{k});
         P = table();
         if isfile(fullfile(dirs{k},'policy_probe.csv')), P = readtable(fullfile(dirs{k},'policy_probe.csv')); end
         i = find(strcmp({runs.name},base),1);
@@ -102,7 +102,7 @@ function file = localLearning(run,outputDir,reasons,colors)
     scatter(ax,E.tau_final(m),E.kappa_final(m),30,x(m),'filled'); colorbar(ax);
     xlabel(ax,'\tau (time)'); ylabel(ax,'\kappa (charge)'); title(ax,'Trade-off, colour = episode');
     file = fullfile(outputDir,[run.name '_learning.png']);
-    exportgraphics(f,file,'Resolution',110); close(f);
+    localExport(f,file); close(f);
 end
 
 function file = localBehaviour(run,outputDir)
@@ -141,7 +141,7 @@ function file = localBehaviour(run,outputDir)
         title(ax,'Policy at fixed start states');
     end
     file = fullfile(outputDir,[run.name '_behaviour.png']);
-    exportgraphics(f,file,'Resolution',110); close(f);
+    localExport(f,file); close(f);
 end
 
 function localGroupScatter(ax,x,y,groups)
@@ -156,6 +156,42 @@ end
 function f = localFigure(size)
     f = figure('Visible','off','Position',[0 0 size],'Color','w');
     if isprop(f,'Theme'), f.Theme = 'light'; end
+end
+
+function D = localReadDecisions(folder)
+% decisions.csv, or the parts decisions-001.csv, decisions-002.csv, ... in order.
+    whole = fullfile(folder,'decisions.csv');
+    if isfile(whole)
+        paths = {whole};
+    else
+        parts = dir(fullfile(folder,'decisions-*.csv'));
+        assert(~isempty(parts),'plot_energy_mission_training_summary:NoDecisions', ...
+            'No decisions.csv or decisions-*.csv in %s.',folder);
+        paths = fullfile(folder,sort({parts.name}));
+    end
+    opts = detectImportOptions(paths{1},'TextType','string');
+    if any(strcmp(opts.VariableNames,'terminal_reason'))
+        opts = setvartype(opts,'terminal_reason','string');
+    end
+    D = cell(numel(paths),1);
+    for k = 1:numel(paths)
+        D{k} = readtable(paths{k},opts);
+    end
+    D = vertcat(D{:});
+    if any(strcmp(D.Properties.VariableNames,'terminal_reason'))
+        D.terminal_reason(ismissing(D.terminal_reason)) = "";
+    end
+end
+
+function localExport(f,file)
+% PNG below 1e6 bytes: lower the resolution if the first export is too large.
+    for resolution = [110 90 72]
+        exportgraphics(f,file,'Resolution',resolution);
+        info = dir(file);
+        if info.bytes < 1e6, return, end
+    end
+    warning('plot_energy_mission_training_summary:LargeFigure', ...
+        '%s is %d bytes even at %d dpi.',file,info.bytes,resolution);
 end
 
 function index = match(values,keys)
