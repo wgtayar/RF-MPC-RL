@@ -2,7 +2,8 @@ function summary = export_energy_mission_training_summary(runRoot, outputDir, op
 %export_energy_mission_training_summary Small, read-only learning summary of a training run.
 %   summary = export_energy_mission_training_summary(runRoot, outputDir)
 %   reads a finished train_energy_mission_rl run and writes, into outputDir:
-%     decisions.csv   one row per decision: action, executed speed, reward terms,
+%     decisions.csv   (or decisions-NNN.csv, see split_decisions below)
+%                     one row per decision: action, executed speed, reward terms,
 %                     SOC, pack/drive electrical state, attitude, QP health
 %     episodes.csv    one row per episode: initial/end SOC, end reason, return and
 %                     its components, tau/kappa, charge, energy, speed, limits,
@@ -15,10 +16,20 @@ function summary = export_energy_mission_training_summary(runRoot, outputDir, op
 %   The run folder is only read. outputDir must not exist yet.
 %
 %   options.probe_checkpoints (default true) evaluates every checkpoint.
+%   options.split_decisions (default false) writes decisions-001.csv,
+%     decisions-002.csv, ... in place of decisions.csv. Each part holds whole
+%     episodes and is smaller than options.max_file_bytes (default 1e6 bytes);
+%     non-integer numbers are rounded to options.significant_digits (default 6)
+%     significant digits. Use it when the summary is published where files must
+%     stay small. An episode too large for one part is an error. Other CSV
+%     files at or above the limit are reported with a warning.
     arguments
         runRoot (1,:) char
         outputDir (1,:) char
         options.probe_checkpoints (1,1) logical = true
+        options.split_decisions (1,1) logical = false
+        options.max_file_bytes (1,1) double {mustBePositive,mustBeInteger} = 1e6
+        options.significant_digits (1,1) double {mustBePositive,mustBeInteger} = 6
     end
     assert(isfolder(fullfile(runRoot,'decisions')) && isfile(fullfile(runRoot,'training','final_agent.mat')), ...
         'export_energy_mission_training_summary:NotARun','%s is not a finished training run.',runRoot);
@@ -54,12 +65,18 @@ function summary = export_energy_mission_training_summary(runRoot, outputDir, op
     report = load(fullfile(runRoot,'training','report.mat'),'report').report;
     episodes = localEpisodes(runRoot,decisions,final.stats,fileTimes);
     mkdir(outputDir);
-    writetable(decisions,fullfile(outputDir,'decisions.csv'));
+    if options.split_decisions
+        decisionFiles = localWriteSplit(localRound(decisions,options.significant_digits), ...
+            decisions.episode,outputDir,'decisions',options.max_file_bytes);
+    else
+        writetable(decisions,fullfile(outputDir,'decisions.csv'));
+        decisionFiles = {'decisions.csv'};
+    end
     writetable(episodes,fullfile(outputDir,'episodes.csv'));
     episodeIndex = ids(:,1)'; decisionIndex = ids(:,2)'; %#ok<NASGU>
     save(fullfile(outputDir,'transitions.mat'),'obs','nextObs','actions','rewards','done', ...
         'episodeIndex','decisionIndex','-v7.3');
-    written = {'decisions.csv','episodes.csv','transitions.mat'};
+    written = [decisionFiles,{'episodes.csv','transitions.mat'}];
     probe = table();
     if options.probe_checkpoints
         probe = localProbe(runRoot,obs(:,decisions.decision==1),episodes.episode(:)');
@@ -78,8 +95,82 @@ function summary = export_energy_mission_training_summary(runRoot, outputDir, op
         'files',{written});
     written{end+1} = 'summary.json';
     summary.files = written;
+    if options.split_decisions
+        summary.decision_files = decisionFiles;
+        summary.max_file_bytes = options.max_file_bytes;
+        summary.significant_digits = options.significant_digits;
+    end
     fid = fopen(fullfile(outputDir,'summary.json'),'w');
     fprintf(fid,'%s',jsonencode(summary,'PrettyPrint',true)); fclose(fid);
+    if options.split_decisions
+        for k = 1:numel(written)
+            [~,~,ext] = fileparts(written{k});
+            info = dir(fullfile(outputDir,written{k}));
+            if ~strcmp(ext,'.mat') && info.bytes >= options.max_file_bytes
+                warning('export_energy_mission_training_summary:LargeFile', ...
+                    '%s is %d bytes, not below %d.',written{k},info.bytes,options.max_file_bytes);
+            end
+        end
+    end
+end
+
+function T = localRound(T,digits)
+% Round non-integer floating values to the given significant digits; integer
+% values (counters, indices) are kept exactly.
+    names = T.Properties.VariableNames;
+    for k = 1:numel(names)
+        v = T.(names{k});
+        if isfloat(v)
+            r = round(double(v),digits,'significant');
+            keep = ~isfinite(v) | v == round(v);
+            r(keep) = v(keep);
+            T.(names{k}) = r;
+        end
+    end
+end
+
+function files = localWriteSplit(T,episode,outputDir,stem,maxBytes)
+% Write T as stem-001.csv, stem-002.csv, ... Each part keeps whole episodes
+% (rows of T are grouped by episode in order) and is below maxBytes.
+    temp = [tempname '.csv'];
+    cleanup = onCleanup(@() localDelete(temp));
+    writetable(T,temp);
+    fid = fopen(temp,'r'); bytes = fread(fid,Inf,'*uint8')'; fclose(fid);
+    if isempty(bytes) || bytes(end) ~= uint8(10), bytes(end+1) = uint8(10); end
+    ends = find(bytes == uint8(10));
+    assert(numel(ends) == height(T)+1,'export_energy_mission_training_summary:CsvLines', ...
+        'Expected one line per row in the decision table.');
+    header = bytes(1:ends(1));
+    rowStart = ends(1:end-1)+1; rowEnd = ends(2:end);
+    [labels,~,group] = unique(episode(:),'stable');
+    assert(all(diff(group) >= 0),'export_energy_mission_training_summary:EpisodeOrder', ...
+        'Decision rows must be grouped by episode.');
+    files = {}; part = uint8([]); partEpisodes = 0;
+    for g = 1:numel(labels)
+        rows = find(group == g);
+        block = bytes(rowStart(rows(1)):rowEnd(rows(end)));
+        assert(numel(header)+numel(block) < maxBytes,'export_energy_mission_training_summary:EpisodeTooLarge', ...
+            'Episode %d alone needs %d bytes, not below %d.',labels(g),numel(header)+numel(block),maxBytes);
+        if partEpisodes > 0 && numel(header)+numel(part)+numel(block) >= maxBytes
+            files{end+1} = localWritePart(outputDir,stem,numel(files)+1,[header part]); %#ok<AGROW>
+            part = uint8([]); partEpisodes = 0;
+        end
+        part = [part block]; %#ok<AGROW>
+        partEpisodes = partEpisodes+1;
+    end
+    if partEpisodes > 0
+        files{end+1} = localWritePart(outputDir,stem,numel(files)+1,[header part]);
+    end
+end
+
+function name = localWritePart(outputDir,stem,index,bytes)
+    name = sprintf('%s-%03d.csv',stem,index);
+    fid = fopen(fullfile(outputDir,name),'w');
+    fwrite(fid,bytes,'uint8'); fclose(fid);
+end
+
+function localDelete(path)
+    if isfile(path), delete(path); end
 end
 
 function row = localDecisionRow(id,r,audit)
