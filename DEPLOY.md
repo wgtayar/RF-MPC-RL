@@ -134,12 +134,12 @@ The blind agent still sees the battery's mechanical consequences (executed speed
 
 ```matlab
 train_energy_mission_rl('<artifacts>/shift-w063-s20260903', struct('mode','train','seed',20260903, ...
-    'max_episodes',200,'setup_options',struct('time_weight',0.63,'shift',struct('enabled',true)), ...
+    'max_episodes',30,'setup_options',struct('time_weight',0.63,'shift',struct('enabled',true)), ...
     'init_agent_from','<artifacts>/train-w063-s20260903-t1'))
 % battery-blind arm: add 'battery_blind',true to setup_options and start from train-blind-w063-s20260903-t1
 ```
 
-- **Limits:** set `max_episodes` above what fits in the time available and stop the run when its time is up. Resuming a shift run with `resume_from` is not supported yet.
+- **Limits:** set `max_episodes` to what fits in the time available: one episode is up to 4 missions, about 3 h at the lab PC's pace. Do not stop a run by hand. Only a run that ends by itself saves `final_agent.mat`, its report and its validation, which the evaluation needs; a killed run keeps only per-episode checkpoints. Resuming a shift run with `resume_from` is not supported yet.
 
 **Learning summary of a finished run.** This reads a run folder (never writes to it) and writes a small summary folder, a few MB per 70 episodes, that can be copied to another PC for analysis:
 
