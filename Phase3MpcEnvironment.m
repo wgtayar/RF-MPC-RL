@@ -144,11 +144,14 @@ classdef Phase3MpcEnvironment < rl.env.MATLABEnvironment
                 obj.recordEpisodeEnd('reset_interrupted');
             end
             cfg = obj.Config;
-            [episodeCfg,initialSocAudit] = obj.episodeInitialSoc(cfg);
             carriedAudit = struct();
-            if ~isempty(carriedEnergy)
-                assert(isempty(obj.SocStream),'Phase3MpcEnvironment:CarriedBattery', ...
-                    'Continuous depletion requires a fixed initial-SOC configuration.');
+            if isempty(carriedEnergy)
+                [episodeCfg,initialSocAudit] = obj.episodeInitialSoc(cfg);
+            else
+                % A carried battery replaces the start-SOC draw (no stream draw).
+                episodeCfg = cfg; initialSocAudit = struct();
+                assert(isempty(obj.SocStream) || localShiftTraining(cfg),'Phase3MpcEnvironment:CarriedBattery', ...
+                    'A carried battery requires a fixed initial-SOC configuration or shift training.');
                 assert(isstruct(carriedEnergy) && all(isfield(carriedEnergy,{'soc','rc','estimate','cov'})), ...
                     'Phase3MpcEnvironment:CarriedBattery','Carried energy state is incomplete.');
                 episodeCfg.BATTERY.SOC_init = carriedEnergy.soc;
@@ -445,4 +448,9 @@ function version = localEnergyRewardVersion(cfg)
             ismember(cfg.REWARD.version,{'reward_energy_mission_v1','reward_energy_mission_v2','reward_energy_mission_v3'})
         version = cfg.REWARD.version;
     end
+end
+
+function tf = localShiftTraining(cfg)
+    tf = isfield(cfg,'ENERGY_RL') && isfield(cfg.ENERGY_RL,'options') && ...
+        isfield(cfg.ENERGY_RL.options,'shift') && cfg.ENERGY_RL.options.shift.enabled;
 end

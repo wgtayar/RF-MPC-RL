@@ -24,11 +24,20 @@ function report = train_energy_mission_rl(outputRoot,options)
     if ~isempty(options.seed), options.setup_options.seed=options.seed; end
     bundle = setup_energy_mission_rl(options.setup_options);
     options.seed = bundle.cfg.RNG_SEED;
+    shift = bundle.cfg.ENERGY_RL.options.shift;
+    % In shift training one learner episode holds up to max_missions missions;
+    % the wrapper truncates at the mission cap, so the toolbox step limit only
+    % has to be large enough never to cut a mission short.
+    horizon = bundle.cfg.EP_STEPS*(1+shift.enabled*(shift.max_missions-1));
     if isempty(options.max_steps_per_episode)
-        options.max_steps_per_episode = bundle.cfg.EP_STEPS;
+        options.max_steps_per_episode = horizon;
     end
-    assert(options.max_steps_per_episode<=bundle.cfg.EP_STEPS, ...
+    assert(options.max_steps_per_episode<=horizon, ...
         'train_energy_mission_rl:StepLimit','The step limit cannot exceed the configured finite mission horizon.');
+    assert(~(shift.enabled && ~isempty(options.resume_from)),'train_energy_mission_rl:ShiftResume', ...
+        'Resuming shift training is not supported yet; use init_agent_from for a warm start.');
+    assert(isempty(options.resume_from) || isempty(options.init_agent_from),'train_energy_mission_rl:WarmStart', ...
+        'Use either resume_from or init_agent_from, not both.');
     settings = energy_mission_agent_options(options.agent_options);
     bundle.cfg.TRAIN = settings;
     bundle.cfg.TRAIN.run_options = options;
@@ -52,6 +61,13 @@ function report = train_energy_mission_rl(outputRoot,options)
         'learning_rates_used',[],'exploration_noise_used',[], ...
         'source_start',sourceStart,'resumed_from',[]);
     if ~isempty(resume), metadata.resumed_from = resume.provenance; end
+    warm = [];
+    metadata.warm_started_from = [];
+    if ~isempty(options.init_agent_from)
+        warm = localWarmStart(options.init_agent_from);
+        metadata.warm_started_from = warm.provenance;
+    end
+    metadata.shift = shift;
     if training
         metadata.learning_rates_used = metadata.learning_rates_configured;
         metadata.exploration_noise_used = struct('type','independent_gaussian_normalized', ...
@@ -78,6 +94,16 @@ function report = train_energy_mission_rl(outputRoot,options)
             assert(agent.ExperienceBuffer.Length == numel(resume.experiences), ...
                 'train_energy_mission_rl:ResumeReplay','The replay memory could not hold every previous transition.');
             resume = rmfield(resume,{'agent','experiences'});
+        end
+        if ~isempty(warm)
+            % Warm start: networks (actor, critics, their targets and optimizer
+            % state) from a validated run; the replay memory starts empty.
+            assert(isequaln(agentSpec,warm.agent_spec),'train_energy_mission_rl:WarmStartAgent', ...
+                'The warm-start agent uses a different agent specification (schema, sizes or settings).');
+            agent = warm.agent;
+            agent.ExperienceBuffer = rlReplayMemory(getObservationInfo(env),getActionInfo(env), ...
+                settings.experience_buffer_length);
+            warm = rmfield(warm,'agent');
         end
         before = localParameters(agent);
         save(fullfile(trainingDir,'initial_agent.mat'),'agent','agentSpec','initialRng','-v7.3');
@@ -125,7 +151,8 @@ function report = train_energy_mission_rl(outputRoot,options)
             'actor_parameters_changed',~isequaln(before.actor,after.actor), ...
             'critic_parameters_changed',[~isequaln(before.critic1,after.critic1) ...
                 ~isequaln(before.critic2,after.critic2)], ...
-            'resumed_from',metadata.resumed_from, ...
+            'resumed_from',metadata.resumed_from,'warm_started_from',metadata.warm_started_from, ...
+            'shift',shift, ...
             'cumulative_episodes_trained',episodes+localPrevious(metadata,'cumulative_episodes_trained'), ...
             'cumulative_training_decisions',steps+localPrevious(metadata,'cumulative_training_decisions'), ...
             'performance_tuned',false,'training_promoted',false, ...
@@ -199,7 +226,7 @@ end
 function options = localOptions(options)
     defaults = struct('mode','build_only','setup_options',struct(),'seed',[], ...
         'max_episodes',1,'max_steps_per_episode',[],'agent_options',struct(), ...
-        'environment_options',struct(),'resume_from','');
+        'environment_options',struct(),'resume_from','','init_agent_from','');
     assert(isstruct(options) && isscalar(options) && ...
         all(ismember(fieldnames(options),fieldnames(defaults))), ...
         'train_energy_mission_rl:Options','Unknown training option.');
@@ -222,6 +249,21 @@ function options = localOptions(options)
     end
     validateattributes(options.setup_options,{'struct'},{'scalar'});
     validateattributes(options.environment_options,{'struct'},{'scalar'});
+end
+
+function warm = localWarmStart(path)
+% Networks of a completed, validated, clean training run; never its replay.
+    previous = char(java.io.File(char(path)).getCanonicalPath());
+    checkpoint = load_energy_mission_checkpoint(previous);   % hashes, completion, clean source
+    trainingDir = fullfile(previous,'training');
+    validation = load(fullfile(trainingDir,'validation.mat'),'validation').validation;
+    assert(validation.valid,'train_energy_mission_rl:WarmStartInvalid','The source run did not validate.');
+    saved = load(fullfile(trainingDir,'final_agent.mat'),'agent','agentSpec');
+    report = jsondecode(fileread(fullfile(trainingDir,'report.json')));
+    warm = struct('agent',saved.agent,'agent_spec',saved.agentSpec);
+    warm.provenance = struct('run_root',previous,'run_id',report.run_id, ...
+        'source_sha',report.source_sha,'final_agent_sha256',checkpoint.sha256, ...
+        'episodes_trained',report.episodes_trained,'replay','not_carried');
 end
 
 function resume = localResume(options)

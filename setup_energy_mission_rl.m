@@ -6,7 +6,8 @@ if nargin<1, options=struct(); end
 assert(isstruct(options) && isscalar(options),'energyMission:Options','Options must be a scalar struct.');
 defaults=struct('initial_soc',.95,'target_distance_m',320,'mission_duration_s',600, ...
     'decision_interval_s',5,'time_weight',.63,'seed',20260903, ...
-    'initial_soc_mode','fixed','initial_soc_range',[.30 1],'battery_blind',false);
+    'initial_soc_mode','fixed','initial_soc_range',[.30 1],'battery_blind',false, ...
+    'shift',struct('enabled',false,'max_missions',4,'min_start_soc',.30));
 % Initial SOC (investigator 2026-11-12): fixed starts may lie anywhere in the
 % declared 30-100% range (evaluation grid 30/35/45/60/80/95/100%). Training
 % uses initial_soc_mode='uniform': each episode draws its start uniformly
@@ -49,6 +50,26 @@ validateattributes(options.seed,{'double'},{'scalar','integer','nonnegative','<=
 % networks and seeds are unchanged; the agent is blind, the objective is not.
 assert(islogical(options.battery_blind) && isscalar(options.battery_blind), ...
     'energyMission:Options','battery_blind must be a logical scalar.');
+% Shift training (WGT 2026-11-20, monitor #40): missions run back to back on
+% one battery. The training wrapper restarts the robot from standing after a
+% completed mission and carries the battery (true SOC, cell RC, estimator).
+% An episode holds at most max_missions missions; at the cap it is truncated
+% (IsDone=2, the critic bootstraps) and the next episode continues from the
+% carried battery. The shift ends normally (IsDone=1, no penalty) when a
+% mission completes below min_start_soc estimated SOC; a mission failure ends
+% it with the usual terminal penalty. Evaluation and the native environment
+% are unchanged; this only affects EnergyMissionTrainingEnvironment.
+shiftDefaults=struct('enabled',false,'max_missions',4,'min_start_soc',.30);
+assert(isstruct(options.shift) && isscalar(options.shift) && ...
+    all(ismember(fieldnames(options.shift),fieldnames(shiftDefaults))), ...
+    'energyMission:Options','Unknown shift option.');
+for f=fieldnames(shiftDefaults).'
+    if ~isfield(options.shift,f{1}),options.shift.(f{1})=shiftDefaults.(f{1});end
+end
+assert(islogical(options.shift.enabled) && isscalar(options.shift.enabled), ...
+    'energyMission:Options','shift.enabled must be a logical scalar.');
+validateattributes(options.shift.max_missions,{'double'},{'scalar','integer','positive'});
+validateattributes(options.shift.min_start_soc,{'double'},{'scalar','real','>',.2,'<',1});
 oldRng=rng; cleanup=onCleanup(@()rng(oldRng));
 bundle=setup_RL_MPC('legacy_frozen_v1'); c=bundle.cfg;
 % Plant revision 2026-11-05: swing feet track the continuous Bezier plan
