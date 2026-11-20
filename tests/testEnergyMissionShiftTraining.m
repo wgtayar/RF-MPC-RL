@@ -37,7 +37,10 @@ classdef testEnergyMissionShiftTraining < matlab.unittest.TestCase
             tc.verifyEqual(sum(d==2),sum(log.learner_done==2),'Each cap is stored as a truncation.');
             tc.verifyEqual(sum(d==1),sum(log.learner_done==1),'Only shift ends and failures are terminal.');
             tc.verifyGreaterThanOrEqual(sum(log.learner_done==0),1,'At least one mission boundary inside an episode.');
-            tc.verifyEqual(r.captured_episodes,height(log),'One captured native episode per mission.');
+            % One captured native episode per mission; after a final cap the next
+            % mission has already been started (to bridge the cut) but not walked.
+            tc.verifyEqual(r.captured_episodes,height(log)+double(log.learner_done(end)==2), ...
+                'One captured native episode per mission (plus a started one after a final cap).');
         end
 
         function warmStartCopiesNetworksWithEmptyReplay(tc)
