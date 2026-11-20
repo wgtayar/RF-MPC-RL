@@ -125,6 +125,22 @@ train_energy_mission_rl('<artifacts>/train-blind-w063-s20260903', struct('mode',
 
 The blind agent still sees the battery's mechanical consequences (executed speed, tracking and solver signals), so the ablation removes battery state, not its effects on motion.
 
+**Shift training (chained missions, `shift`).** Missions run back to back on one battery. After a completed mission the robot restarts from standing and the battery carries over (true SOC, cell RC voltages, estimator).
+- **Episode boundaries:** a learner episode holds at most `max_missions` missions (default 4). At the cap the episode is *truncated* (IsDone=2, so the critic bootstraps) and the next episode continues the same battery.
+- **End of a shift:** normal (IsDone=1, no penalty) when a mission finishes below `min_start_soc` estimated SOC (default 30%); with the −1 penalty when a mission fails. After a shift ends, the next episode draws a fresh start SOC.
+- **Records:** each mission stays its own captured, validated episode, and `shift_missions.csv` in the run folder logs the chaining.
+- **Warm start:** `init_agent_from` takes the networks of a validated run (actor, critics, their targets and optimizer state) with an empty replay memory. The agent specification must match, so an aware run needs an aware source and a blind run a blind source.
+- **Launch commands:**
+
+```matlab
+train_energy_mission_rl('<artifacts>/shift-w063-s20260903', struct('mode','train','seed',20260903, ...
+    'max_episodes',200,'setup_options',struct('time_weight',0.63,'shift',struct('enabled',true)), ...
+    'init_agent_from','<artifacts>/train-w063-s20260903-t1'))
+% battery-blind arm: add 'battery_blind',true to setup_options and start from train-blind-w063-s20260903-t1
+```
+
+- **Limits:** set `max_episodes` above what fits in the time available and stop the run when its time is up. Resuming a shift run with `resume_from` is not supported yet.
+
 **Learning summary of a finished run.** This reads a run folder (never writes to it) and writes a small summary folder, a few MB per 70 episodes, that can be copied to another PC for analysis:
 
 ```matlab
