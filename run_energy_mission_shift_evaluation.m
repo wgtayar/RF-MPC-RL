@@ -168,7 +168,8 @@ tf=isfield(cfg.ENERGY_RL.options,'battery_blind') && cfg.ENERGY_RL.options.batte
 end
 
 function o=localEnvOptions(c)
-o=c.PHASE3.options;
+% Saved checkpoints carry their environment options; a fresh setup has none.
+o=struct();if isfield(c,'PHASE3') && isfield(c.PHASE3,'options'),o=c.PHASE3.options;end
 if isfield(o,'reward_schema_if_present'),o=rmfield(o,'reward_schema_if_present');end
 end
 
