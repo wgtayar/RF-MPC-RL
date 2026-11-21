@@ -28,21 +28,25 @@ classdef EnergyMissionB4Governor < handle
         HeadroomIndex
     end
     methods
-        function obj = EnergyMissionB4Governor(cfg,params,speedAction)
-            assert(strcmp(cfg.PHASE3.observation_schema,'observation_energy_mission_v1'), ...
-                'b4Governor:Schema','B4 reads the energy-mission observation signals.');
+        function obj = EnergyMissionB4Governor(params,speedAction)
             energy_mission_b4_headroom_speed(NaN,NaN,1,params);   % validates params
             obj.Params = params;
             obj.SpeedAction = speedAction;
-            obj.Unit = energy_mission_scales(cfg).pack_voltage_unit_V;
-            names = energy_mission_observation_schema(cfg).names;
-            obj.SocIndex = find(names=="estimated_soc");
-            obj.HeadroomIndex = find(names=="drive_headroom_per_series_cell");
-            assert(isscalar(obj.SocIndex) && isscalar(obj.HeadroomIndex),'b4Governor:Schema', ...
-                'Observation schema lacks estimated_soc or drive_headroom_per_series_cell.');
         end
 
         function action = act(obj,native)
+            if isempty(obj.Unit)
+                % The environment's own configuration defines the observation.
+                cfg = native.Config;
+                assert(strcmp(cfg.PHASE3.observation_schema,'observation_energy_mission_v1'), ...
+                    'b4Governor:Schema','B4 reads the energy-mission observation signals.');
+                obj.Unit = energy_mission_scales(cfg).pack_voltage_unit_V;
+                names = energy_mission_observation_schema(cfg).names;
+                obj.SocIndex = find(names=="estimated_soc");
+                obj.HeadroomIndex = find(names=="drive_headroom_per_series_cell");
+                assert(isscalar(obj.SocIndex) && isscalar(obj.HeadroomIndex),'b4Governor:Schema', ...
+                    'Observation schema lacks estimated_soc or drive_headroom_per_series_cell.');
+            end
             s = native.State.energy.estimate(1);
             headroom = NaN;
             b = native.State.battery;

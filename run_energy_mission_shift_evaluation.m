@@ -30,7 +30,8 @@ function report=run_energy_mission_shift_evaluation(outputRoot,options)
 %             the thresholds and the counts of speed reductions and increases;
 %             mission_<k>_policy_choice.json holds the per-decision log.
 % The policy is built at each mission start from the estimated SOC after the
-% reset and called each decision as policy(observation,env.Native); missions.csv records the chosen speed (NaN for 'agent'), and
+% reset and called each decision as policy(observation,env.Native);
+% missions.csv records the chosen speed (NaN for 'agent'), and
 % b3_shift writes each mission's rule audit to mission_<k>_policy_choice.json.
 % The shift score G uses options.score_time_weight (A3.0: 0.80) for every
 % policy, computed from each mission's totals:
@@ -237,7 +238,7 @@ energy_mission_b4_headroom_speed(NaN,NaN,1,params);   % validates the parameters
 end
 
 function [policy,speed,governor]=localB4(c,params)
-governor=EnergyMissionB4Governor(c,params,@(v)localSpeedAction(c,v));
+governor=EnergyMissionB4Governor(params,@(v)localSpeedAction(c,v));
 policy=@(~,native)governor.act(native);
 speed=NaN;
 end
