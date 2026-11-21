@@ -12,6 +12,7 @@ suites = {
     'testBatteryManuscriptConfig'
     'testEnergyMissionDataset'
     'testEnergyMissionObjective'
+    'testEnergyMissionPlantMismatch'
     'testEnergyMissionPolicyEvaluation'
     'testEnergyMissionTiming'
     'testEnergyMissionTraining'
