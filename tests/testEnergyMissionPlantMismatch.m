@@ -20,7 +20,7 @@ classdef testEnergyMissionPlantMismatch < matlab.unittest.TestCase
             tc.Folder=fixture.Folder;
             tc.Options=struct('policy','fixed','speed_m_s',1.0,'start_soc',.95,'min_start_soc',.9495, ...
                 'smoke_distance_m',3,'smoke_duration_s',10);
-            tc.Nominal=tc.run('nominal',struct());
+            tc.Nominal=tc.shift('nominal',struct());
         end
     end
     methods(Test)
@@ -40,7 +40,7 @@ classdef testEnergyMissionPlantMismatch < matlab.unittest.TestCase
             tc.verifyFalse(report.plant_mismatch.declared);
             tc.verifyEqual(m.start_soc_estimated,m.start_soc_true,'Nominal estimate starts at the truth.');
             % The plant path with identity parameters is bitwise the nominal one.
-            same=tc.run('identity',struct('plant_resistance_scale',1,'plant_capacity_Ah',2));
+            same=tc.shift('identity',struct('plant_resistance_scale',1,'plant_capacity_Ah',2));
             s=same.missions;
             tc.verifyFalse(same.plant.nominal,'An explicit capacity is a declared (identity) plant.');
             for name={'charge_As','energy_Wh','time_s','distance_m','end_soc_true','end_soc_estimated','score'}
@@ -50,7 +50,7 @@ classdef testEnergyMissionPlantMismatch < matlab.unittest.TestCase
         end
 
         function higherResistanceDrawsMoreCharge(tc)
-            r=tc.run('r1',struct('plant_resistance_scale',1.3));
+            r=tc.shift('r1',struct('plant_resistance_scale',1.3));
             m=r.missions(1);n=tc.Nominal.missions(1);
             tc.verifyEqual(m.plant_resistance_scale,1.3);tc.verifyFalse(m.plant_nominal);
             tc.verifyGreaterThan(m.charge_As,n.charge_As,'R1: more charge for the same mission.');
@@ -60,7 +60,7 @@ classdef testEnergyMissionPlantMismatch < matlab.unittest.TestCase
         end
 
         function smallerCapacityDrainsTrueSocFaster(tc)
-            r=tc.run('r2',struct('plant_capacity_Ah',1.8));
+            r=tc.shift('r2',struct('plant_capacity_Ah',1.8));
             m=r.missions(1);n=tc.Nominal.missions(1);
             drop=m.start_soc_true-m.end_soc_true;nominalDrop=n.start_soc_true-n.end_soc_true;
             tc.verifyEqual(drop,m.charge_As/(3600*1.8),'AbsTol',1e-12,'True SOC is booked on the plant capacity.');
@@ -80,7 +80,7 @@ classdef testEnergyMissionPlantMismatch < matlab.unittest.TestCase
             % truth (about 0.905 after mission 1, 0.902 after mission 2), so a
             % 0.903 minimum start yields exactly two missions.
             o=struct('plant_soc_estimate_offset',.05,'start_soc',.90,'min_start_soc',.903);
-            r=tc.run('r3',o);m=r.missions;
+            r=tc.shift('r3',o);m=r.missions;
             tc.verifyEqual(numel(m),2,'Two missions: the second carries the estimator.');
             tc.verifyEqual(m(1).start_soc_estimated,m(1).start_soc_true+.05,'AbsTol',1e-15, ...
                 'R3: estimated SOC = true + offset at the first mission start.');
@@ -114,7 +114,7 @@ classdef testEnergyMissionPlantMismatch < matlab.unittest.TestCase
         end
     end
     methods
-        function r=run(tc,name,extra)
+        function r=shift(tc,name,extra)
             o=tc.Options;
             for n=fieldnames(extra).',o.(n{1})=extra.(n{1});end
             root=fullfile(tc.Folder,name);
