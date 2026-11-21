@@ -3,11 +3,16 @@ function result = run_reference_continuity_ablation(runRoot,referenceMode,scenar
 %   runRoot is a new directory below the local artifact store. Scenarios are
 %   staircase95, staircase45, and constant95. A smaller decisionLimit is
 %   useful for a smoke check and is recorded separately from a terminal run.
+%   longwalk95 and longwalk60 (monitor #43, WGT 21 Nov 2026): one continuous
+%   mission of 1280 m in 2400 s (four standard missions without stopping),
+%   the battery draining normally, with the speed command switched at every
+%   320 m boundary (1.0, 0.85, 1.0, 0.85 m/s), as a charge-budgeting plan
+%   would. Pass a decisionLimit of at least 480 for the full walk.
     arguments
         runRoot (1,:) char
         referenceMode (1,:) char {mustBeMember(referenceMode, ...
             {'legacy_absolute_time','velocity_continuous_v2'})}
-        scenario (1,:) char {mustBeMember(scenario,{'staircase95','staircase45','constant95'})}
+        scenario (1,:) char {mustBeMember(scenario,{'staircase95','staircase45','constant95','longwalk95','longwalk60'})}
         decisionLimit (1,1) double {mustBeInteger,mustBePositive} = 120
     end
 
@@ -29,7 +34,16 @@ function result = run_reference_continuity_ablation(runRoot,referenceMode,scenar
         speeds = .8;
     end
     holdSeconds = 60;
-    bundle = setup_energy_mission_rl(struct('initial_soc',initialSoc));
+    setup = struct('initial_soc',initialSoc);
+    segmentMetres = Inf;
+    if startsWith(scenario,'longwalk')
+        initialSoc = str2double(scenario(end-1:end))/100;
+        speeds = [1.0 .85 1.0 .85];
+        segmentMetres = 320;
+        setup = struct('initial_soc',initialSoc,'target_distance_m',numel(speeds)*segmentMetres, ...
+            'mission_duration_s',numel(speeds)*600);
+    end
+    bundle = setup_energy_mission_rl(setup);
     cfg = bundle.cfg;
     gamma = (speeds-cfg.V_MIN)/(cfg.V_MAX-cfg.V_MIN);
     % Initialize the governor at the first target. In the constant control
@@ -40,7 +54,7 @@ function result = run_reference_continuity_ablation(runRoot,referenceMode,scenar
         'monitor_root',fullfile(workspace,'RL-MPC-Monitor'), ...
         'source_policy',scenario,'reference_mode',referenceMode, ...
         'initial_soc',initialSoc,'requested_speed_schedule_m_s',speeds, ...
-        'hold_seconds',holdSeconds,'decision_limit',decisionLimit, ...
+        'hold_seconds',holdSeconds,'segment_metres',segmentMetres,'decision_limit',decisionLimit, ...
         'training',false,'learning_rates_used',[],'exploration_noise_used',[]);
     raw = fullfile(runRoot,'raw');
     timer = tic;
@@ -53,14 +67,23 @@ function result = run_reference_continuity_ablation(runRoot,referenceMode,scenar
     endReason = 'probe_decision_limit';
     decisionSeconds = cfg.CHUNK_DURATION*cfg.APPLY_EVERY;
 
+    distance = 0;
+    segmentLog = zeros(0,3);
     try
         reset(env);
         while ~env.Done && env.Decision < decisionLimit
-            index = 1+mod(floor(env.Decision*decisionSeconds/holdSeconds),numel(speeds));
+            if isfinite(segmentMetres)
+                % Speed command switches at each segment boundary crossed.
+                index = min(1+floor(distance/segmentMetres),numel(speeds));
+            else
+                index = 1+mod(floor(env.Decision*decisionSeconds/holdSeconds),numel(speeds));
+            end
             [~,~,isDone,info] = step(env,[zeros(3,1);gamma(index);cfg.GAMMA_A_MIN]);
             assert(abs(info.window.v_exec-speeds(index)) < 1e-9, ...
                 'referenceAblation:Speed','The governor did not apply the scripted speed.');
             appliedSpeeds(end+1,1) = info.window.v_exec; %#ok<AGROW>
+            distance = info.window.distance_end_m;
+            segmentLog(end+1,:) = [env.State.t distance env.State.energy.soc]; %#ok<AGROW>
             recovered = recovered+info.window.recovered_solver_events;
             attitude = info.window.attitude;
             if attitude.available
@@ -105,6 +128,8 @@ function result = run_reference_continuity_ablation(runRoot,referenceMode,scenar
         'peak_tilt_rad',peakTilt,'time_above_025_rad_s',tiltExceedanceSteps*metrics.mpc_timestep_s, ...
         'peak_body_rate_rad_s',peakBodyRate,'charge_As',charge,'charge_per_m_As',chargePerMetre, ...
         'applied_speed_m_s',appliedSpeeds,'decision_limit',decisionLimit, ...
+        'segment_metres',segmentMetres,'segments',localSegments(segmentLog,segmentMetres), ...
+        'final_true_soc',env.State.energy.soc,'final_estimated_soc',env.State.energy.estimate(1), ...
         'dataset_validated',true,'wall_seconds',toc(timer));
     analysisDir = fullfile(runRoot,'analysis');
     mkdir(analysisDir);
@@ -120,4 +145,15 @@ function sha = cleanSourceSha(source)
     assert(gitStatus == 0 && shaStatus == 0 && isempty(strtrim(dirty)), ...
         'referenceAblation:Dirty','Run from a clean Git commit.');
     sha = strtrim(sha);
+end
+
+function segments = localSegments(log,segmentMetres)
+% Time and SOC at which each segment boundary was crossed (long walks only).
+    segments = struct('boundary_m',{},'time_s',{},'true_soc',{});
+    if ~isfinite(segmentMetres) || isempty(log), return, end
+    for k = 1:floor(log(end,2)/segmentMetres)
+        row = find(log(:,2) >= k*segmentMetres,1);
+        segments(end+1) = struct('boundary_m',k*segmentMetres,'time_s',log(row,1), ...
+            'true_soc',log(row,3)); %#ok<AGROW>
+    end
 end
