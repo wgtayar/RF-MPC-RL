@@ -19,6 +19,7 @@ suites = {
     'testEnergyMissionShift'
     'testEnergyMissionShiftTraining'
     'testEnergyMissionShiftEvaluation'
+    'testEnergyMissionB3ShiftSpeed'
     'testFixedPackEnergy'
     'testFixedPackFailureHandling'
     'testFixedPackLegacyTiming'

@@ -11,6 +11,15 @@ function report=run_energy_mission_shift_evaluation(outputRoot,options)
 %   'agent' - deterministic actor of a saved checkpoint (no exploration); the
 %             checkpoint's own configuration (including battery_blind) is used.
 %   'fixed' - fixed speed options.speed_m_s for every decision (baselines).
+%   'b3_shift' - charge-budget rule of protocol A3.3: at each mission start
+%             the speed is chosen once from the estimated SOC with
+%             energy_mission_b3_shift_speed and the fixed-speed sweep table(s)
+%             options.table (path or cell array of paths), then held for the
+%             whole mission (R action zero, gamma_a at GAMMA_A_MIN). The table
+%             SHA-256 digests are recorded and checked before every mission.
+% The policy is built at each mission start from the estimated SOC after the
+% reset; missions.csv records the chosen speed (NaN for 'agent'), and
+% b3_shift writes each mission's rule audit to mission_<k>_policy_choice.json.
 % The shift score G uses options.score_time_weight (A3.0: 0.80) for every
 % policy, computed from each mission's totals:
 %   completed: 2 - w*tau - (1-w)*kappa;  failed: p - 1 - w*tau - (1-w)*kappa
@@ -28,7 +37,7 @@ assert(isempty(localGit(source,'status --porcelain')),'shiftEval:Dirty','Commit 
 canonical=char(java.io.File(char(outputRoot)).getCanonicalPath());
 assert(~startsWith(string(canonical),string(source)),'shiftEval:OutputInsideSource', ...
     'Evaluation evidence belongs outside the source checkout.');
-[bundle,policy,provenance]=localPolicy(options);
+[bundle,policyAt,provenance]=localPolicy(options);
 c=bundle.cfg;
 stateFile=fullfile(outputRoot,'state.mat');
 if isfile(stateFile)
@@ -59,6 +68,7 @@ while ~done
     env=EnergyMissionTrainingEnvironment(bundle,folder,metadata,localEnvOptions(c));
     try
         if isempty(carried),observation=reset(env);else,observation=reset(env,carried);end
+        [policy,chosenSpeed,choice]=policyAt(env.Native.State.energy.estimate(1));
         e0=env.Native.State.energy;timer=tic;
         while ~env.Native.Done
             [observation,~,~,info]=step(env,policy(observation));
@@ -67,6 +77,7 @@ while ~done
         metrics=phase3_episode_metrics(env.Native.Writer.Root,env.Native.Config,env.Native.Episode);
         row=localRow(k,e0,e,reason,env.Native.State.t,info.window.distance_end_m,metrics, ...
             energy_mission_scales(env.Native.Config),options.score_time_weight,toc(timer));
+        row.chosen_speed_m_s=chosenSpeed;
         next=struct('soc',e.soc,'rc',e.rc,'estimate',e.estimate,'cov',e.cov);
         root=env.Native.Writer.Root;
         close(env,'shift_evaluation_mission_complete');
@@ -79,6 +90,7 @@ while ~done
         if ~env.Native.Writer.Closed,close(env,'shift_evaluation_exception');end
         rethrow(err)
     end
+    if ~isempty(choice),localJson(fullfile(outputRoot,[name '_policy_choice.json']),choice);end
     if isempty(missions),missions=row;else,missions(end+1)=row;end %#ok<AGROW>
     carried=next;
     done=~row.mission_complete || row.end_soc_estimated<options.min_start_soc;
@@ -86,8 +98,8 @@ while ~done
     save([stateFile '.tmp'],'missions','carried','done','options','source_sha','-mat');
     movefile([stateFile '.tmp'],stateFile,'f');
     writetable(struct2table(missions,'AsArray',true),fullfile(outputRoot,'missions.csv'));
-    fprintf('[shift %s] mission %d %s: %.1f s, %.2f As, SOC %.4f -> %.4f (est %.4f), G_m %.4f\n', ...
-        shiftId,k,row.outcome,row.time_s,row.charge_As,row.start_soc_true,row.end_soc_true,row.end_soc_estimated,row.score);
+    fprintf('[shift %s] mission %d (%.2f m/s) %s: %.1f s, %.2f As, SOC %.4f -> %.4f (est %.4f), G_m %.4f\n', ...
+        shiftId,k,row.chosen_speed_m_s,row.outcome,row.time_s,row.charge_As,row.start_soc_true,row.end_soc_true,row.end_soc_estimated,row.score);
 end
 assert(strcmp(sha,localGit(source,'rev-parse HEAD')) && isempty(localGit(source,'status --porcelain')), ...
     'shiftEval:SourceChanged','Source changed during evaluation.');
@@ -103,25 +115,36 @@ localJson(fullfile(outputRoot,'result.json'),report);
 end
 
 function options=localOptions(options)
-d=struct('policy','fixed','checkpoint','','speed_m_s',NaN,'start_soc',.95,'min_start_soc',.30, ...
+d=struct('policy','fixed','checkpoint','','speed_m_s',NaN,'table','','start_soc',.95,'min_start_soc',.30, ...
     'score_time_weight',.80,'max_missions',30,'smoke_distance_m',NaN,'smoke_duration_s',NaN);
 assert(isstruct(options) && isscalar(options) && all(ismember(fieldnames(options),fieldnames(d))), ...
     'shiftEval:Options','Unknown shift evaluation option.');
 for n=fieldnames(d).',if ~isfield(options,n{1}),options.(n{1})=d.(n{1});end,end
-options.policy=validatestring(options.policy,{'agent','fixed'});
+options.policy=validatestring(options.policy,{'agent','fixed','b3_shift'});
 options.checkpoint=char(options.checkpoint);
+if isstring(options.table) || iscell(options.table)
+    options.table=cellstr(options.table);options.table=options.table(:).';
+    if isscalar(options.table),options.table=options.table{1};end
+end
+assert(ischar(options.table) || iscellstr(options.table),'shiftEval:Table','The table option must be a path or paths.');
 validateattributes(options.start_soc,{'double'},{'scalar','real','>=',.30,'<=',1});
 validateattributes(options.min_start_soc,{'double'},{'scalar','real','>',.2,'<',1});
 validateattributes(options.score_time_weight,{'double'},{'scalar','real','>=',0,'<=',1});
 validateattributes(options.max_missions,{'double'},{'scalar','integer','positive'});
-if strcmp(options.policy,'agent')
-    assert(~isempty(options.checkpoint),'shiftEval:Checkpoint','An agent evaluation needs a checkpoint.');
-else
-    validateattributes(options.speed_m_s,{'double'},{'scalar','real','finite','positive'});
+switch options.policy
+    case 'agent'
+        assert(~isempty(options.checkpoint),'shiftEval:Checkpoint','An agent evaluation needs a checkpoint.');
+    case 'fixed'
+        validateattributes(options.speed_m_s,{'double'},{'scalar','real','finite','positive'});
+    case 'b3_shift'
+        assert(~isempty(options.table),'shiftEval:Table','A b3_shift evaluation needs the sweep table(s).');
+        assert(isnan(options.speed_m_s),'shiftEval:Speed','b3_shift chooses its own speed; leave speed_m_s unset.');
 end
 end
 
-function [bundle,policy,provenance]=localPolicy(options)
+function [bundle,policyAt,provenance]=localPolicy(options)
+% policyAt(socEstimate) returns the mission's policy handle, its constant
+% speed (NaN for the actor) and an audit struct (empty unless b3_shift).
 smoke=struct();
 if ~isnan(options.smoke_distance_m)
     smoke=struct('target_distance_m',options.smoke_distance_m,'mission_duration_s',options.smoke_duration_s);
@@ -131,7 +154,7 @@ if strcmp(options.policy,'agent')
     overrides=smoke;overrides.initial_soc=options.start_soc;
     bundle=energy_mission_evaluation_bundle(checkpoint.bundle,overrides);
     actor=checkpoint.actor;
-    policy=@(observation)localActor(actor,observation);
+    policyAt=@(~)deal(@(observation)localActor(actor,observation),NaN,[]);
     provenance=struct('name','deterministic_actor','checkpoint_path',checkpoint.path, ...
         'checkpoint_sha256',checkpoint.sha256,'checkpoint_root',checkpoint.root, ...
         'training_source_sha',checkpoint.training_source_sha, ...
@@ -141,18 +164,40 @@ else
     setup=struct('initial_soc',options.start_soc,'time_weight',options.score_time_weight);
     for n=fieldnames(smoke).',setup.(n{1})=smoke.(n{1});end
     bundle=setup_energy_mission_rl(setup);c=bundle.cfg;
-    gamma=(options.speed_m_s-c.V_MIN)/(c.V_MAX-c.V_MIN);
-    assert(gamma>=c.GAMMA_V_MIN-1e-12 && gamma<=c.GAMMA_V_MAX+1e-12,'shiftEval:Speed','Speed outside action bounds.');
-    physical=[zeros(3,1);min(max(gamma,c.GAMMA_V_MIN),c.GAMMA_V_MAX);c.GAMMA_A_MIN];
-    [~,audit]=energy_mission_action_transform(zeros(5,1),c);
-    normalized=(physical-audit.bias)./audit.scale;
-    policy=@(~)normalized;
-    provenance=struct('name',sprintf('fixed_%.2f',options.speed_m_s),'speed_m_s',options.speed_m_s, ...
-        'battery_blind',false,'actor_for_validation',[]);
+    if strcmp(options.policy,'fixed')
+        normalized=localSpeedAction(c,options.speed_m_s);
+        policyAt=@(~)deal(@(~)normalized,options.speed_m_s,[]);
+        provenance=struct('name',sprintf('fixed_%.2f',options.speed_m_s),'speed_m_s',options.speed_m_s, ...
+            'battery_blind',false,'actor_for_validation',[]);
+    else
+        paths=cellstr(options.table);
+        digests=cellfun(@sha256_file,paths,'UniformOutput',false);
+        for v=[1.0 0.9 0.85 0.8 0.75],localSpeedAction(c,v);end   % every candidate is admissible
+        policyAt=@(soc)localB3(c,paths,digests,soc);
+        provenance=struct('name','b3_shift','rule','energy_mission_b3_shift_speed', ...
+            'table_paths',{paths},'table_sha256',{digests},'battery_blind',false,'actor_for_validation',[]);
+    end
 end
 % Evaluation chains missions itself; the training wrapper's chaining is off.
 bundle.cfg.ENERGY_RL.options.shift.enabled=false;
 if isfield(bundle.cfg,'INITIAL_SOC'),bundle.cfg.INITIAL_SOC.mode='fixed';end
+end
+
+function normalized=localSpeedAction(c,speed)
+% Normalized action holding speed: R unchanged (zero), gamma_a at its minimum.
+gamma=(speed-c.V_MIN)/(c.V_MAX-c.V_MIN);
+assert(gamma>=c.GAMMA_V_MIN-1e-12 && gamma<=c.GAMMA_V_MAX+1e-12,'shiftEval:Speed','Speed outside action bounds.');
+physical=[zeros(3,1);min(max(gamma,c.GAMMA_V_MIN),c.GAMMA_V_MAX);c.GAMMA_A_MIN];
+[~,audit]=energy_mission_action_transform(zeros(5,1),c);
+normalized=(physical-audit.bias)./audit.scale;
+end
+
+function [policy,speed,choice]=localB3(c,paths,digests,soc)
+assert(isequal(cellfun(@sha256_file,paths,'UniformOutput',false),digests),'shiftEval:TableChanged', ...
+    'The sweep table changed during the shift.');
+[speed,choice]=energy_mission_b3_shift_speed(paths,soc);
+normalized=localSpeedAction(c,speed);
+policy=@(~)normalized;
 end
 
 function action=localActor(actor,observation)
@@ -184,7 +229,7 @@ row=struct('mission',k,'start_soc_true',e0.soc,'start_soc_estimated',e0.estimate
     'charge_As',e.chargeAs,'energy_Wh',e.energyWh,'end_soc_true',e.soc,'end_soc_estimated',e.estimate(1), ...
     'tau',tau,'kappa',kappa,'score',score,'failed_qps',metrics.failed_qps, ...
     'voltage_limit_steps',metrics.voltage_limit_steps,'torque_limit_steps',metrics.torque_limit_steps, ...
-    'wall_min',wall/60,'dataset_validated',false,'actions_reconstructed',true);
+    'wall_min',wall/60,'dataset_validated',false,'actions_reconstructed',true,'chosen_speed_m_s',NaN);
 end
 
 function out=localGit(root,args)
