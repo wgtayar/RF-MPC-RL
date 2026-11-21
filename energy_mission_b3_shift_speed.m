@@ -9,8 +9,9 @@ function [speed,audit] = energy_mission_b3_shift_speed(source,s)
 % requested_speed_m_s, outcome and charge_As of fixed-speed single missions
 % (sweep format), or the path (char/string) or paths (cell/string array) of
 % sweep CSV files, which are concatenated. When a role column exists only
-% rows with role 'benchmark' are kept; when a dataset_validated column exists
-% only validated rows are kept. A (speed, start SOC) cell may appear once.
+% rows with role 'benchmark' or 'validation_threshold' (the 1.0 m/s limit
+% threshold missions of #39, part of B3-shift per the frozen A3) are kept;
+% when a dataset_validated column exists only validated rows are kept. A (speed, start SOC) cell may appear once.
 %
 % Rule. Q(v,s) is the charge of completed missions at speed v, linear in
 % start SOC between table starts and clamped at the table ends; the SOC drop
@@ -119,7 +120,7 @@ elseif isstruct(source)
 else
     error('b3Shift:Table','The table must be a table, struct or CSV path(s).');
 end
-keep = strcmp(raw.role,'benchmark') & raw.validated;
+keep = ismember(raw.role,{'benchmark','validation_threshold'}) & raw.validated;
 raw = raw(keep,:);
 t = table(round(raw.requested_speed_m_s,3),round(raw.initial_soc,6),strcmp(raw.outcome,'mission_complete'), ...
     raw.charge_As,'VariableNames',{'speed','start','completed','charge'});
