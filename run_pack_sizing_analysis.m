@@ -227,8 +227,8 @@ eligible=eligible(eligible.cell_count==min(eligible.cell_count),{'n_series','n_p
 designs=table2struct(eligible);
 end
 function value=gitValue(root,args)
-[status,value]=system(sprintf('git -C "%s" %s',root,args));
-assert(status==0,'packSizing:Git','Git provenance failed.'); value=strtrim(value);
+[status,value]=git_output(root,args);
+assert(status==0,'packSizing:Git','Git provenance failed (exit %d): %s',status,value); value=strtrim(value);
 end
 function writeJson(root,name,value)
 file=fopen(fullfile(root,[name '.json']),'w'); assert(file>=0);

@@ -105,7 +105,8 @@ end
 end
 
 function value=gitValue(root,args)
-[status,value]=system(sprintf('git -C "%s" %s',root,args)); assert(status==0); value=strtrim(value);
+[status,value]=git_output(root,args);
+assert(status==0,'packSizing:Git','Git provenance failed (exit %d): %s',status,value); value=strtrim(value);
 end
 function writeJson(root,name,value)
 fid=fopen(fullfile(root,[name '.json']),'w'); assert(fid>=0); cleanup=onCleanup(@()fclose(fid));
