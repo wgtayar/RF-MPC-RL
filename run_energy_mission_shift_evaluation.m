@@ -25,6 +25,15 @@ function report=run_energy_mission_shift_evaluation(outputRoot,options)
 %   completed: 2 - w*tau - (1-w)*kappa;  failed: p - 1 - w*tau - (1-w)*kappa
 % with tau, kappa the reward-v3 span-normalized time and charge excesses.
 %
+% Plant mismatch (protocol A4, evaluation only): plant_resistance_scale
+% multiplies the simulated cells' R0..R3, plant_capacity_Ah replaces the
+% simulated cell capacity, and plant_soc_estimate_offset sets the EKF's
+% initial SOC estimate to true SOC + offset at the first mission (later
+% missions carry the estimator). The EKF model, observation, reward scales,
+% agent and baseline tables stay nominal (see robotenergy.plantMismatch).
+% The plant is recorded in manifest.json, every mission row, result.json,
+% the dataset manifest and configuration; defaults are the nominal plant.
+%
 % Resumable: after every mission the result row and the carried battery are
 % saved (state.mat, atomic). Calling again with the same outputRoot and
 % options skips completed missions; an interrupted mission folder is renamed
@@ -38,6 +47,7 @@ canonical=char(java.io.File(char(outputRoot)).getCanonicalPath());
 assert(~startsWith(string(canonical),string(source)),'shiftEval:OutputInsideSource', ...
     'Evaluation evidence belongs outside the source checkout.');
 [bundle,policyAt,provenance]=localPolicy(options);
+[bundle,plant]=localPlant(bundle,options);
 c=bundle.cfg;
 stateFile=fullfile(outputRoot,'state.mat');
 if isfile(stateFile)
@@ -49,7 +59,7 @@ else
     if ~isfolder(outputRoot),mkdir(outputRoot);end
     missions=struct([]);carried=[];done=false;
     localJson(fullfile(outputRoot,'manifest.json'),struct('schema','energy_mission_shift_evaluation_v1', ...
-        'source_sha',sha,'options',options,'policy',provenance,'carried_fields',{{'soc','rc','estimate','cov'}}, ...
+        'source_sha',sha,'options',options,'policy',provenance,'carried_fields',{{'soc','rc','estimate','cov'}},'plant',plant, ...
         'started',char(datetime('now','TimeZone','local','Format','yyyy-MM-dd''T''HH:mm:ssXXX'))));
 end
 [~,shiftId]=fileparts(outputRoot);
@@ -65,6 +75,7 @@ while ~done
         'monitor_root',fullfile(fileparts(source),'RL-MPC-Monitor'),'seed',c.RNG_SEED, ...
         'source_policy',provenance.name,'training',false,'learning_rates_used',[], ...
         'exploration_noise_used',[],'inference_mode','deterministic_no_exploration');
+    if ~plant.nominal,metadata.plant_mismatch=bundle.cfg.BATTERY.plant_mismatch;end
     env=EnergyMissionTrainingEnvironment(bundle,folder,metadata,localEnvOptions(c));
     try
         if isempty(carried),observation=reset(env);else,observation=reset(env,carried);end
@@ -78,6 +89,7 @@ while ~done
         row=localRow(k,e0,e,reason,env.Native.State.t,info.window.distance_end_m,metrics, ...
             energy_mission_scales(env.Native.Config),options.score_time_weight,toc(timer));
         row.chosen_speed_m_s=chosenSpeed;
+        row=localPlantRow(row,plant);
         next=struct('soc',e.soc,'rc',e.rc,'estimate',e.estimate,'cov',e.cov);
         root=env.Native.Writer.Root;
         close(env,'shift_evaluation_mission_complete');
@@ -111,12 +123,14 @@ report=struct('schema','energy_mission_shift_evaluation_v1','source_sha',sha,'op
     'end_soc_estimated',missions(end).end_soc_estimated,'G',sum([missions.score]), ...
     'score_time_weight',options.score_time_weight,'failed_qps',sum([missions.failed_qps]), ...
     'all_datasets_validated',all([missions.dataset_validated]),'missions',missions);
+report.plant=plant;
 localJson(fullfile(outputRoot,'result.json'),report);
 end
 
 function options=localOptions(options)
 d=struct('policy','fixed','checkpoint','','speed_m_s',NaN,'table','','start_soc',.95,'min_start_soc',.30, ...
-    'score_time_weight',.80,'max_missions',30,'smoke_distance_m',NaN,'smoke_duration_s',NaN);
+    'score_time_weight',.80,'max_missions',30,'smoke_distance_m',NaN,'smoke_duration_s',NaN, ...
+    'plant_resistance_scale',1,'plant_capacity_Ah',[],'plant_soc_estimate_offset',0);
 assert(isstruct(options) && isscalar(options) && all(ismember(fieldnames(options),fieldnames(d))), ...
     'shiftEval:Options','Unknown shift evaluation option.');
 for n=fieldnames(d).',if ~isfield(options,n{1}),options.(n{1})=d.(n{1});end,end
@@ -131,6 +145,11 @@ validateattributes(options.start_soc,{'double'},{'scalar','real','>=',.30,'<=',1
 validateattributes(options.min_start_soc,{'double'},{'scalar','real','>',.2,'<',1});
 validateattributes(options.score_time_weight,{'double'},{'scalar','real','>=',0,'<=',1});
 validateattributes(options.max_missions,{'double'},{'scalar','integer','positive'});
+validateattributes(options.plant_resistance_scale,{'double'},{'scalar','real','finite','positive'});
+if ~isempty(options.plant_capacity_Ah)
+    validateattributes(options.plant_capacity_Ah,{'double'},{'scalar','real','finite','positive'});
+end
+validateattributes(options.plant_soc_estimate_offset,{'double'},{'scalar','real','finite','>',-1,'<',1});
 switch options.policy
     case 'agent'
         assert(~isempty(options.checkpoint),'shiftEval:Checkpoint','An agent evaluation needs a checkpoint.');
@@ -181,6 +200,32 @@ end
 % Evaluation chains missions itself; the training wrapper's chaining is off.
 bundle.cfg.ENERGY_RL.options.shift.enabled=false;
 if isfield(bundle.cfg,'INITIAL_SOC'),bundle.cfg.INITIAL_SOC.mode='fixed';end
+end
+
+function [bundle,plant]=localPlant(bundle,options)
+% Declares the evaluation-only plant mismatch on the battery configuration
+% (robotenergy.start attaches it to the plant state). Defaults leave the
+% configuration untouched: the nominal plant reproduces exactly.
+b=bundle.cfg.BATTERY;
+assert(~isfield(b,'plant_mismatch'),'shiftEval:Plant','The configuration already declares a plant mismatch.');
+capacity=options.plant_capacity_Ah;if isempty(capacity),capacity=b.C_nom_Ah;end
+nominal=options.plant_resistance_scale==1 && isempty(options.plant_capacity_Ah) && options.plant_soc_estimate_offset==0;
+plant=struct('nominal',nominal,'version','plant_battery_mismatch_v1', ...
+    'resistance_scale',options.plant_resistance_scale,'capacity_Ah',capacity, ...
+    'nominal_capacity_Ah',b.C_nom_Ah,'soc_estimate_offset',options.plant_soc_estimate_offset);
+if nominal,return;end
+bundle.cfg.BATTERY.plant_mismatch=struct('version',plant.version, ...
+    'resistance_scale',plant.resistance_scale,'capacity_Ah',capacity, ...
+    'soc_estimate_offset',plant.soc_estimate_offset,'scope', ...
+    ['Protocol A4 evaluation only: the simulated plant cells use scaled R0..R3 and this capacity; ' ...
+    'the EKF model, observation, reward scales, agent and baseline tables stay nominal; the EKF ' ...
+    'initial SOC estimate is true SOC plus the offset at a fresh (first-mission) start.']);
+robotenergy.plantMismatch(bundle.cfg.BATTERY);
+end
+
+function row=localPlantRow(row,plant)
+row.plant_nominal=plant.nominal;row.plant_resistance_scale=plant.resistance_scale;
+row.plant_capacity_Ah=plant.capacity_Ah;row.plant_soc_estimate_offset=plant.soc_estimate_offset;
 end
 
 function normalized=localSpeedAction(c,speed)

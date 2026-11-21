@@ -1,7 +1,7 @@
 function y=instantaneousPack(s,P)
 %INSTANTANEOUSPACK Zero-duration load solve; never books current or energy.
 validateattributes(P,{'numeric'},{'scalar','real','finite','nonnegative'});
-[r,ocv]=robotenergy.lookup(s,s.soc);
+[r,ocv]=robotenergy.lookup(robotenergy.plantView(s),s.soc);   % plant, never the estimator
 E=ocv-sum(s.rc); R=r(1); w=P/(s.ns*s.np); D=E^2-4*R*w;
 assert(E>0 && D>=0,'robotenergy:PowerLimit','Instantaneous demand exceeds modeled pack power.');
 i=2*w/(E+sqrt(D)); v=E-R*i;

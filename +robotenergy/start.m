@@ -25,4 +25,12 @@ s.ocvDerivative=mkpp(breaks,coefs(:,1:end-1).*(order-1:-1:1));
 s.estimatorVersion=robotenergy.estimatorVersion(b);
 s.voltageLimitSteps=0; s.torqueLimitSteps=0;
 if isfield(b,'fixed_pack_spec'), s.packId=b.fixed_pack_spec.id; end
+if isfield(b,'plant_mismatch')
+    % Evaluation-only plant/estimator mismatch (protocol A4). The estimator
+    % model stays nominal; at a fresh start its SOC is offset from the truth.
+    s.plant=robotenergy.plantMismatch(b);
+    s.estimate(1)=b.SOC_init+s.plant.soc_estimate_offset;
+    assert(s.estimate(1)>=t.SOC(1) && s.estimate(1)<=t.SOC(end),'robotenergy:PlantMismatch', ...
+        'Initial SOC estimate lies outside the characterized range.');
+end
 end
