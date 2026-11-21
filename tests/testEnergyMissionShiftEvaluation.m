@@ -3,8 +3,8 @@ classdef testEnergyMissionShiftEvaluation < matlab.unittest.TestCase
     % battery with no cap, the robot restarted each mission, a normal end below
     % the minimum start SOC, the shift score G at the scoring weight, and
     % resume after an interruption, and the B3-shift charge-budget policy
-    % choosing its speed at each mission start. Short missions test the
-    % plumbing only.
+    % choosing its speed at each mission start, and the B4 headroom-feedback
+    % governor acting at every decision. Short missions test the plumbing only.
     properties
         Folder
         Source
@@ -90,6 +90,54 @@ classdef testEnergyMissionShiftEvaluation < matlab.unittest.TestCase
             tc.verifyEqual(csv.chosen_speed_m_s.',[m.chosen_speed_m_s]);
             tc.verifyEqual(r.failed_qps,0);
             tc.verifyTrue(r.all_datasets_validated);
+        end
+
+        function b4GovernorReactsToHeadroomEveryDecision(tc)
+            % h_low above any reachable headroom: the command starts at v* and
+            % falls 0.1 m/s at every later decision. Thresholds below any
+            % headroom with a cap of 0.8 m/s: the command holds at the cap and
+            % never rises toward v*. One short mission per shift.
+            o=struct('policy','b4','b4_h_low_V',100,'b4_h_high_V',200,'b4_v_star_m_s',1.0, ...
+                'start_soc',.95,'min_start_soc',.9495,'smoke_distance_m',3,'smoke_duration_s',10);
+            tc.verifyError(@()run_energy_mission_shift_evaluation(fullfile(tc.Folder,'bad'), ...
+                setfield(o,'speed_m_s',1)),'shiftEval:Speed');
+            tc.verifyError(@()run_energy_mission_shift_evaluation(fullfile(tc.Folder,'bad'), ...
+                setfield(o,'b4_h_low_V',300)),'b4Governor:Thresholds');
+            root=fullfile(tc.Folder,'b4_lower');
+            evalc('r=run_energy_mission_shift_evaluation(root,o);');
+            m=r.missions;
+            tc.verifyEqual(numel(m),1);
+            choice=jsondecode(fileread(fullfile(root,'mission_01_policy_choice.json')));
+            d=choice.decisions;n=numel(d);
+            tc.verifyGreaterThanOrEqual(n,2,'At least one feedback decision.');
+            tc.verifyEqual([d.command_m_s].',1.0-.1*(0:n-1).','AbsTol',1e-9,'Steps down 0.1 m/s per decision.');
+            tc.verifyEqual({d.event}.',[{'start'};repmat({'lower'},n-1,1)]);
+            h=[d(2:end).headroom_per_cell_V];
+            tc.verifyTrue(all(isfinite(h) & h<o.b4_h_low_V),'Headroom measured after the first decision.');
+            tc.verifyEqual(m.b4_decisions,n);
+            tc.verifyEqual(m.b4_speed_reductions,n-1);tc.verifyEqual(m.b4_speed_increases,0);
+            tc.verifyEqual(m.chosen_speed_m_s,mean([d.command_m_s]),'AbsTol',1e-12,'Mean B4 command.');
+            tc.verifyEqual([m.b4_h_low_V m.b4_h_high_V m.b4_v_star_m_s],[100 200 1]);
+            manifest=jsondecode(fileread(fullfile(root,'manifest.json')));
+            tc.verifyEqual([manifest.options.b4_h_low_V manifest.options.b4_h_high_V],[100 200]);
+            tc.verifyEqual(manifest.policy.parameters.max_change_m_s,.2,'AbsTol',1e-12);
+            csv=readtable(fullfile(root,'missions.csv'));
+            tc.verifyEqual(csv.b4_speed_reductions,n-1);tc.verifyEqual(csv.b4_h_low_V,100);
+            tc.verifyEqual(r.failed_qps,0);
+            tc.verifyTrue(r.all_datasets_validated);
+            % Raise requested every decision (headroom above h_high, v < v*),
+            % but v_cap(estimated SOC) = 0.8 m/s blocks it.
+            o2=setfield(setfield(setfield(o,'b4_h_low_V',-100),'b4_h_high_V',-50),'b4_v_cap_table',[0 .8;1 .8]); %#ok<SFLD>
+            root=fullfile(tc.Folder,'b4_cap');
+            evalc('r=run_energy_mission_shift_evaluation(root,o2);');
+            m=r.missions;
+            choice=jsondecode(fileread(fullfile(root,'mission_01_policy_choice.json')));
+            d=choice.decisions;n=numel(d);
+            tc.verifyEqual([d.command_m_s].',.8*ones(n,1),'AbsTol',1e-12,'Never above the cap.');
+            tc.verifyEqual({d(2:end).event}.',repmat({'raise'},n-1,1));
+            tc.verifyEqual(m.b4_speed_increases,0);tc.verifyEqual(m.b4_speed_reductions,0);
+            tc.verifyEqual(m.b4_cap_limited_decisions,n);tc.verifyTrue(m.b4_v_cap_from_table);
+            tc.verifyEqual(m.chosen_speed_m_s,.8,'AbsTol',1e-12);
         end
 
         function agentShiftUsesTheDeterministicActor(tc)

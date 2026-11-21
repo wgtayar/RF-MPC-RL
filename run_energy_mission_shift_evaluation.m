@@ -17,8 +17,20 @@ function report=run_energy_mission_shift_evaluation(outputRoot,options)
 %             options.table (path or cell array of paths), then held for the
 %             whole mission (R action zero, gamma_a at GAMMA_A_MIN). The table
 %             SHA-256 digests are recorded and checked before every mission.
+%   'b4'     - headroom-feedback governor (BASELINES_V3 row B4): each mission
+%             starts at options.b4_v_star_m_s; at every decision the command
+%             falls 0.1 m/s while the drive headroom per series cell is below
+%             options.b4_h_low_V and rises 0.1 m/s (up to b4_v_star_m_s) while
+%             it is above options.b4_h_high_V, never above v_cap(estimated
+%             SOC) from options.b4_v_cap_table ([SOC, m/s] rows; empty: the
+%             action bound V_MAX) and never by more than the 0.2 m/s
+%             per-decision change cap. R action zero, gamma_a at GAMMA_A_MIN.
+%             It reads only signals the agent observes (EnergyMissionB4Governor).
+%             missions.csv records the mean B4 command as chosen_speed_m_s,
+%             the thresholds and the counts of speed reductions and increases;
+%             mission_<k>_policy_choice.json holds the per-decision log.
 % The policy is built at each mission start from the estimated SOC after the
-% reset; missions.csv records the chosen speed (NaN for 'agent'), and
+% reset and called each decision as policy(observation,env.Native); missions.csv records the chosen speed (NaN for 'agent'), and
 % b3_shift writes each mission's rule audit to mission_<k>_policy_choice.json.
 % The shift score G uses options.score_time_weight (A3.0: 0.80) for every
 % policy, computed from each mission's totals:
@@ -71,13 +83,14 @@ while ~done
         [policy,chosenSpeed,choice]=policyAt(env.Native.State.energy.estimate(1));
         e0=env.Native.State.energy;timer=tic;
         while ~env.Native.Done
-            [observation,~,~,info]=step(env,policy(observation));
+            [observation,~,~,info]=step(env,policy(observation,env.Native));
         end
         e=env.Native.State.energy;reason=char(info.terminal_reason);
         metrics=phase3_episode_metrics(env.Native.Writer.Root,env.Native.Config,env.Native.Episode);
         row=localRow(k,e0,e,reason,env.Native.State.t,info.window.distance_end_m,metrics, ...
             energy_mission_scales(env.Native.Config),options.score_time_weight,toc(timer));
         row.chosen_speed_m_s=chosenSpeed;
+        if strcmp(options.policy,'b4'),[row,choice]=localB4Row(row,choice,options);end
         next=struct('soc',e.soc,'rc',e.rc,'estimate',e.estimate,'cov',e.cov);
         root=env.Native.Writer.Root;
         close(env,'shift_evaluation_mission_complete');
@@ -117,10 +130,12 @@ end
 function options=localOptions(options)
 d=struct('policy','fixed','checkpoint','','speed_m_s',NaN,'table','','start_soc',.95,'min_start_soc',.30, ...
     'score_time_weight',.80,'max_missions',30,'smoke_distance_m',NaN,'smoke_duration_s',NaN);
+% B4 placeholders (V per series cell); tuned later on the validation starts.
+d.b4_h_low_V=.05;d.b4_h_high_V=.15;d.b4_v_star_m_s=1.0;d.b4_v_cap_table=[];
 assert(isstruct(options) && isscalar(options) && all(ismember(fieldnames(options),fieldnames(d))), ...
     'shiftEval:Options','Unknown shift evaluation option.');
 for n=fieldnames(d).',if ~isfield(options,n{1}),options.(n{1})=d.(n{1});end,end
-options.policy=validatestring(options.policy,{'agent','fixed','b3_shift'});
+options.policy=validatestring(options.policy,{'agent','fixed','b3_shift','b4'});
 options.checkpoint=char(options.checkpoint);
 if isstring(options.table) || iscell(options.table)
     options.table=cellstr(options.table);options.table=options.table(:).';
@@ -139,12 +154,16 @@ switch options.policy
     case 'b3_shift'
         assert(~isempty(options.table),'shiftEval:Table','A b3_shift evaluation needs the sweep table(s).');
         assert(isnan(options.speed_m_s),'shiftEval:Speed','b3_shift chooses its own speed; leave speed_m_s unset.');
+    case 'b4'
+        assert(isnan(options.speed_m_s),'shiftEval:Speed','b4 chooses its own speed; leave speed_m_s unset.');
+        assert(isempty(options.table),'shiftEval:Table','b4 takes its cap as b4_v_cap_table, not table.');
 end
 end
 
 function [bundle,policyAt,provenance]=localPolicy(options)
-% policyAt(socEstimate) returns the mission's policy handle, its constant
-% speed (NaN for the actor) and an audit struct (empty unless b3_shift).
+% policyAt(socEstimate) returns the mission's policy handle
+% policy(observation,native), its constant speed (NaN for the actor and b4)
+% and an audit (empty for agent and fixed; the governor object for b4).
 smoke=struct();
 if ~isnan(options.smoke_distance_m)
     smoke=struct('target_distance_m',options.smoke_distance_m,'mission_duration_s',options.smoke_duration_s);
@@ -154,7 +173,7 @@ if strcmp(options.policy,'agent')
     overrides=smoke;overrides.initial_soc=options.start_soc;
     bundle=energy_mission_evaluation_bundle(checkpoint.bundle,overrides);
     actor=checkpoint.actor;
-    policyAt=@(~)deal(@(observation)localActor(actor,observation),NaN,[]);
+    policyAt=@(~)deal(@(observation,~)localActor(actor,observation),NaN,[]);
     provenance=struct('name','deterministic_actor','checkpoint_path',checkpoint.path, ...
         'checkpoint_sha256',checkpoint.sha256,'checkpoint_root',checkpoint.root, ...
         'training_source_sha',checkpoint.training_source_sha, ...
@@ -166,8 +185,16 @@ else
     bundle=setup_energy_mission_rl(setup);c=bundle.cfg;
     if strcmp(options.policy,'fixed')
         normalized=localSpeedAction(c,options.speed_m_s);
-        policyAt=@(~)deal(@(~)normalized,options.speed_m_s,[]);
+        policyAt=@(~)deal(@(~,~)normalized,options.speed_m_s,[]);
         provenance=struct('name',sprintf('fixed_%.2f',options.speed_m_s),'speed_m_s',options.speed_m_s, ...
+            'battery_blind',false,'actor_for_validation',[]);
+    elseif strcmp(options.policy,'b4')
+        params=localB4Params(c,options);
+        localSpeedAction(c,params.v_star_m_s);
+        policyAt=@(~)localB4(c,params);
+        provenance=struct('name','b4_headroom_governor','rule','energy_mission_b4_headroom_speed', ...
+            'parameters',params,'signals',{{'estimated_soc: State.energy.estimate(1)', ...
+            'drive_headroom_per_series_cell: State.battery.drive_voltage_headroom_V / n_series'}}, ...
             'battery_blind',false,'actor_for_validation',[]);
     else
         paths=cellstr(options.table);
@@ -197,7 +224,36 @@ assert(isequal(cellfun(@sha256_file,paths,'UniformOutput',false),digests),'shift
     'The sweep table changed during the shift.');
 [speed,choice]=energy_mission_b3_shift_speed(paths,soc);
 normalized=localSpeedAction(c,speed);
-policy=@(~)normalized;
+policy=@(~,~)normalized;
+end
+
+function params=localB4Params(c,options)
+span=c.V_MAX-c.V_MIN;
+params=struct('h_low_V',options.b4_h_low_V,'h_high_V',options.b4_h_high_V, ...
+    'v_star_m_s',options.b4_v_star_m_s,'v_cap_table',options.b4_v_cap_table, ...
+    'v_min_m_s',c.V_MIN+c.GAMMA_V_MIN*span,'v_max_m_s',c.V_MIN+c.GAMMA_V_MAX*span, ...
+    'step_m_s',.1,'max_change_m_s',c.DGAMMA_V_MAX*span);
+energy_mission_b4_headroom_speed(NaN,NaN,1,params);   % validates the parameters
+end
+
+function [policy,speed,governor]=localB4(c,params)
+governor=EnergyMissionB4Governor(c,params,@(v)localSpeedAction(c,v));
+policy=@(~,native)governor.act(native);
+speed=NaN;
+end
+
+function [row,choice]=localB4Row(row,governor,options)
+% chosen_speed_m_s holds the mean B4 command over the mission's decisions.
+s=governor.summary();
+row.chosen_speed_m_s=s.mean_command_m_s;
+row.b4_h_low_V=options.b4_h_low_V;row.b4_h_high_V=options.b4_h_high_V;
+row.b4_v_star_m_s=options.b4_v_star_m_s;row.b4_v_cap_from_table=~isempty(options.b4_v_cap_table);
+row.b4_decisions=s.decisions;row.b4_speed_reductions=s.speed_reductions;
+row.b4_speed_increases=s.speed_increases;row.b4_cap_limited_decisions=s.cap_limited_decisions;
+row.b4_rate_limited_decisions=s.rate_limited_decisions;row.b4_min_command_m_s=s.min_command_m_s;
+row.b4_final_command_m_s=s.final_command_m_s;row.b4_min_headroom_per_cell_V=s.min_headroom_per_cell_V;
+choice=struct('schema','b4_headroom_governor_mission_v1','parameters',governor.Params, ...
+    'summary',s,'decisions',governor.Log);
 end
 
 function action=localActor(actor,observation)
