@@ -25,7 +25,7 @@ classdef testShiftEvaluationSensitivity < matlab.unittest.TestCase
             o=struct('policy','fixed','speed_m_s',1.0,'b4_v_start_m_s',.85);
             tc.verifyError(@()run_energy_mission_shift_evaluation(fullfile(tc.Folder,'x2'),o),'shiftEval:Options');
             o=struct('policy','b3_shift','table',tc.TablePath,'b3_soc_margin',.4);
-            tc.verifyError(@()run_energy_mission_shift_evaluation(fullfile(tc.Folder,'x3'),o),'MATLAB:expectedLessThanOrEqual');
+            tc.verifyError(@()run_energy_mission_shift_evaluation(fullfile(tc.Folder,'x3'),o),'MATLAB:notLessEqual');
         end
 
         function b4SoftStartHoldsUntilTheFirstHeadroomReading(tc)
