@@ -92,7 +92,7 @@ while ~done
     env=EnergyMissionTrainingEnvironment(bundle,folder,metadata,localEnvOptions(c));
     try
         if isempty(carried),observation=reset(env);else,observation=reset(env,carried);end
-        [policy,chosenSpeed,choice]=policyAt(env.Native.State.energy.estimate(1));
+        [policy,chosenSpeed,choice]=policyAt(env.Native.State.energy.estimate(1),options.b4_v_start_m_s);
         e0=env.Native.State.energy;timer=tic;
         while ~env.Native.Done
             [observation,~,~,info]=step(env,policy(observation,env.Native));
@@ -147,6 +147,12 @@ d=struct('policy','fixed','checkpoint','','speed_m_s',NaN,'table','','start_soc'
     'plant_resistance_scale',1,'plant_capacity_Ah',[],'plant_soc_estimate_offset',0);
 % B4 placeholders (V per series cell); tuned later on the validation starts.
 d.b4_h_low_V=.05;d.b4_h_high_V=.15;d.b4_v_star_m_s=1.0;d.b4_v_cap_table=[];
+% Post-hoc sensitivity variants of the deployable rules (review of 23 Nov):
+% b3_soc_margin plans B3 from (estimated SOC - margin); b4_v_start_m_s
+% starts every B4 mission at that command (soft start) instead of v*, after
+% which the frozen headroom rule applies. Defaults (0, NaN) reproduce the
+% frozen B3 and B4 exactly.
+d.b3_soc_margin=0;d.b4_v_start_m_s=NaN;
 assert(isstruct(options) && isscalar(options) && all(ismember(fieldnames(options),fieldnames(d))), ...
     'shiftEval:Options','Unknown shift evaluation option.');
 for n=fieldnames(d).',if ~isfield(options,n{1}),options.(n{1})=d.(n{1});end,end
@@ -166,6 +172,12 @@ if ~isempty(options.plant_capacity_Ah)
     validateattributes(options.plant_capacity_Ah,{'double'},{'scalar','real','finite','positive'});
 end
 validateattributes(options.plant_soc_estimate_offset,{'double'},{'scalar','real','finite','>',-1,'<',1});
+validateattributes(options.b3_soc_margin,{'double'},{'scalar','real','finite','>=',0,'<=',.3});
+validateattributes(options.b4_v_start_m_s,{'double'},{'scalar','real'});
+assert(options.b3_soc_margin==0 || strcmp(options.policy,'b3_shift'),'shiftEval:Options', ...
+    'b3_soc_margin applies to b3_shift only.');
+assert(isnan(options.b4_v_start_m_s) || strcmp(options.policy,'b4'),'shiftEval:Options', ...
+    'b4_v_start_m_s applies to b4 only.');
 switch options.policy
     case 'agent'
         assert(~isempty(options.checkpoint),'shiftEval:Checkpoint','An agent evaluation needs a checkpoint.');
@@ -193,7 +205,7 @@ if strcmp(options.policy,'agent')
     overrides=smoke;overrides.initial_soc=options.start_soc;
     bundle=energy_mission_evaluation_bundle(checkpoint.bundle,overrides);
     actor=checkpoint.actor;
-    policyAt=@(~)deal(@(observation,~)localActor(actor,observation),NaN,[]);
+    policyAt=@(~,~)deal(@(observation,~)localActor(actor,observation),NaN,[]);
     provenance=struct('name','deterministic_actor','checkpoint_path',checkpoint.path, ...
         'checkpoint_sha256',checkpoint.sha256,'checkpoint_root',checkpoint.root, ...
         'training_source_sha',checkpoint.training_source_sha, ...
@@ -205,24 +217,25 @@ else
     bundle=setup_energy_mission_rl(setup);c=bundle.cfg;
     if strcmp(options.policy,'fixed')
         normalized=localSpeedAction(c,options.speed_m_s);
-        policyAt=@(~)deal(@(~,~)normalized,options.speed_m_s,[]);
+        policyAt=@(~,~)deal(@(~,~)normalized,options.speed_m_s,[]);
         provenance=struct('name',sprintf('fixed_%.2f',options.speed_m_s),'speed_m_s',options.speed_m_s, ...
             'battery_blind',false,'actor_for_validation',[]);
     elseif strcmp(options.policy,'b4')
         params=localB4Params(c,options);
         localSpeedAction(c,params.v_star_m_s);
-        policyAt=@(~)localB4(c,params);
+        policyAt=@(~,vStart)localB4(c,params,vStart);
         provenance=struct('name','b4_headroom_governor','rule','energy_mission_b4_headroom_speed', ...
             'parameters',params,'signals',{{'estimated_soc: State.energy.estimate(1)', ...
             'drive_headroom_per_series_cell: State.battery.drive_voltage_headroom_V / n_series'}}, ...
-            'battery_blind',false,'actor_for_validation',[]);
+            'v_start_m_s',options.b4_v_start_m_s,'battery_blind',false,'actor_for_validation',[]);
     else
         paths=cellstr(options.table);
         digests=cellfun(@sha256_file,paths,'UniformOutput',false);
         for v=[1.0 0.9 0.85 0.8 0.75],localSpeedAction(c,v);end   % every candidate is admissible
-        policyAt=@(soc)localB3(c,paths,digests,soc);
+        margin=options.b3_soc_margin;
+        policyAt=@(soc,~)localB3(c,paths,digests,soc,margin);
         provenance=struct('name','b3_shift','rule','energy_mission_b3_shift_speed', ...
-            'table_paths',{paths},'table_sha256',{digests},'battery_blind',false,'actor_for_validation',[]);
+            'table_paths',{paths},'table_sha256',{digests},'soc_margin',margin,'battery_blind',false,'actor_for_validation',[]);
     end
 end
 % Evaluation chains missions itself; the training wrapper's chaining is off.
@@ -265,10 +278,11 @@ physical=[zeros(3,1);min(max(gamma,c.GAMMA_V_MIN),c.GAMMA_V_MAX);c.GAMMA_A_MIN];
 normalized=(physical-audit.bias)./audit.scale;
 end
 
-function [policy,speed,choice]=localB3(c,paths,digests,soc)
+function [policy,speed,choice]=localB3(c,paths,digests,soc,margin)
 assert(isequal(cellfun(@sha256_file,paths,'UniformOutput',false),digests),'shiftEval:TableChanged', ...
     'The sweep table changed during the shift.');
-[speed,choice]=energy_mission_b3_shift_speed(paths,soc);
+[speed,choice]=energy_mission_b3_shift_speed(paths,soc-margin);
+choice.soc_estimated=soc;choice.soc_margin=margin;choice.soc_planned=soc-margin;
 normalized=localSpeedAction(c,speed);
 policy=@(~,~)normalized;
 end
@@ -282,8 +296,8 @@ params=struct('h_low_V',options.b4_h_low_V,'h_high_V',options.b4_h_high_V, ...
 energy_mission_b4_headroom_speed(NaN,NaN,1,params);   % validates the parameters
 end
 
-function [policy,speed,governor]=localB4(c,params)
-governor=EnergyMissionB4Governor(params,@(v)localSpeedAction(c,v));
+function [policy,speed,governor]=localB4(c,params,vStart)
+governor=EnergyMissionB4Governor(params,@(v)localSpeedAction(c,v),vStart);
 policy=@(~,native)governor.act(native);
 speed=NaN;
 end
@@ -294,6 +308,7 @@ s=governor.summary();
 row.chosen_speed_m_s=s.mean_command_m_s;
 row.b4_h_low_V=options.b4_h_low_V;row.b4_h_high_V=options.b4_h_high_V;
 row.b4_v_star_m_s=options.b4_v_star_m_s;row.b4_v_cap_from_table=~isempty(options.b4_v_cap_table);
+row.b4_v_start_m_s=options.b4_v_start_m_s;
 row.b4_decisions=s.decisions;row.b4_speed_reductions=s.speed_reductions;
 row.b4_speed_increases=s.speed_increases;row.b4_cap_limited_decisions=s.cap_limited_decisions;
 row.b4_rate_limited_decisions=s.rate_limited_decisions;row.b4_min_command_m_s=s.min_command_m_s;

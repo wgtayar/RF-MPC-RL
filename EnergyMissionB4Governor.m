@@ -19,6 +19,7 @@ classdef EnergyMissionB4Governor < handle
     properties (SetAccess = private)
         Params
         Command = NaN
+        InitialCommand = NaN
         Log = struct([])
     end
     properties (Access = private)
@@ -28,10 +29,19 @@ classdef EnergyMissionB4Governor < handle
         HeadroomIndex
     end
     methods
-        function obj = EnergyMissionB4Governor(params,speedAction)
+        function obj = EnergyMissionB4Governor(params,speedAction,initialCommand)
+            % initialCommand (optional, m/s): soft-start command held until the
+            % first headroom reading (sensitivity variant b4_v_start_m_s). NaN
+            % or omitted: the frozen B4, whose first decision commands min(v*, cap).
             energy_mission_b4_headroom_speed(NaN,NaN,1,params);   % validates params
             obj.Params = params;
             obj.SpeedAction = speedAction;
+            if nargin >= 3 && ~isnan(initialCommand)
+                validateattributes(initialCommand,{'double'},{'scalar','real','finite', ...
+                    '>=',params.v_min_m_s,'<=',params.v_max_m_s});
+                obj.Command = initialCommand;
+                obj.InitialCommand = initialCommand;
+            end
         end
 
         function action = act(obj,native)
