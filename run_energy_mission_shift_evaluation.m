@@ -204,13 +204,16 @@ if strcmp(options.policy,'agent')
     checkpoint=load_energy_mission_checkpoint(options.checkpoint);
     overrides=smoke;overrides.initial_soc=options.start_soc;
     bundle=energy_mission_evaluation_bundle(checkpoint.bundle,overrides);
+    % Stored data paths from the training machine are re-pointed to the verified
+    % identical files in this checkout (portable evaluation on other machines).
+    [bundle.cfg,portable]=energy_mission_portable_data_paths(bundle.cfg,fileparts(mfilename('fullpath')));
     actor=checkpoint.actor;
     policyAt=@(~,~)deal(@(observation,~)localActor(actor,observation),NaN,[]);
     provenance=struct('name','deterministic_actor','checkpoint_path',checkpoint.path, ...
         'checkpoint_sha256',checkpoint.sha256,'checkpoint_root',checkpoint.root, ...
         'training_source_sha',checkpoint.training_source_sha, ...
         'episodes_trained',checkpoint.checkpoint_episodes_trained, ...
-        'battery_blind',localBlind(bundle.cfg),'actor_for_validation',actor);
+        'battery_blind',localBlind(bundle.cfg),'portable_data_paths',portable,'actor_for_validation',actor);
 else
     setup=struct('initial_soc',options.start_soc,'time_weight',options.score_time_weight);
     for n=fieldnames(smoke).',setup.(n{1})=smoke.(n{1});end
