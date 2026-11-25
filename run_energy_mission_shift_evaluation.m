@@ -46,6 +46,10 @@ function report=run_energy_mission_shift_evaluation(outputRoot,options)
 % agent and baseline tables stay nominal (see robotenergy.plantMismatch).
 % The plant is recorded in manifest.json, every mission row, result.json,
 % the dataset manifest and configuration; defaults are the nominal plant.
+% estimator_resistance_scale (A4 control, default 1 = nominal estimator)
+% scales the EKF's R0..R3: a battery management system that has
+% re-identified the pack resistance (robotenergy.estimatorView). It requires
+% a declared plant mismatch and is recorded with it.
 %
 % Resumable: after every mission the result row and the carried battery are
 % saved (state.mat, atomic). Calling again with the same outputRoot and
@@ -144,7 +148,8 @@ end
 function options=localOptions(options)
 d=struct('policy','fixed','checkpoint','','speed_m_s',NaN,'table','','start_soc',.95,'min_start_soc',.30, ...
     'score_time_weight',.80,'max_missions',30,'smoke_distance_m',NaN,'smoke_duration_s',NaN, ...
-    'plant_resistance_scale',1,'plant_capacity_Ah',[],'plant_soc_estimate_offset',0);
+    'plant_resistance_scale',1,'plant_capacity_Ah',[],'plant_soc_estimate_offset',0, ...
+    'estimator_resistance_scale',1);
 % B4 placeholders (V per series cell); tuned later on the validation starts.
 d.b4_h_low_V=.05;d.b4_h_high_V=.15;d.b4_v_star_m_s=1.0;d.b4_v_cap_table=[];
 % Post-hoc sensitivity variants of the deployable rules (review of 23 Nov):
@@ -172,6 +177,7 @@ if ~isempty(options.plant_capacity_Ah)
     validateattributes(options.plant_capacity_Ah,{'double'},{'scalar','real','finite','positive'});
 end
 validateattributes(options.plant_soc_estimate_offset,{'double'},{'scalar','real','finite','>',-1,'<',1});
+validateattributes(options.estimator_resistance_scale,{'double'},{'scalar','real','finite','positive'});
 validateattributes(options.b3_soc_margin,{'double'},{'scalar','real','finite','>=',0,'<=',.3});
 validateattributes(options.b4_v_start_m_s,{'double'},{'scalar','real'});
 assert(options.b3_soc_margin==0 || strcmp(options.policy,'b3_shift'),'shiftEval:Options', ...
@@ -256,7 +262,10 @@ capacity=options.plant_capacity_Ah;if isempty(capacity),capacity=b.C_nom_Ah;end
 nominal=options.plant_resistance_scale==1 && isempty(options.plant_capacity_Ah) && options.plant_soc_estimate_offset==0;
 plant=struct('nominal',nominal,'version','plant_battery_mismatch_v1', ...
     'resistance_scale',options.plant_resistance_scale,'capacity_Ah',capacity, ...
-    'nominal_capacity_Ah',b.C_nom_Ah,'soc_estimate_offset',options.plant_soc_estimate_offset);
+    'nominal_capacity_Ah',b.C_nom_Ah,'soc_estimate_offset',options.plant_soc_estimate_offset, ...
+    'estimator_resistance_scale',options.estimator_resistance_scale);
+assert(~nominal || options.estimator_resistance_scale==1,'shiftEval:Plant', ...
+    'estimator_resistance_scale requires a declared plant mismatch.');
 if nominal,return;end
 bundle.cfg.BATTERY.plant_mismatch=struct('version',plant.version, ...
     'resistance_scale',plant.resistance_scale,'capacity_Ah',capacity, ...
@@ -264,12 +273,18 @@ bundle.cfg.BATTERY.plant_mismatch=struct('version',plant.version, ...
     ['Protocol A4 evaluation only: the simulated plant cells use scaled R0..R3 and this capacity; ' ...
     'the EKF model, observation, reward scales, agent and baseline tables stay nominal; the EKF ' ...
     'initial SOC estimate is true SOC plus the offset at a fresh (first-mission) start.']);
+if options.estimator_resistance_scale~=1
+    bundle.cfg.BATTERY.plant_mismatch.estimator_resistance_scale=options.estimator_resistance_scale;
+    bundle.cfg.BATTERY.plant_mismatch.scope=[bundle.cfg.BATTERY.plant_mismatch.scope ...
+        ' A4 control: the EKF R0..R3 are scaled by estimator_resistance_scale (re-identified pack resistance).'];
+end
 robotenergy.plantMismatch(bundle.cfg.BATTERY);
 end
 
 function row=localPlantRow(row,plant)
 row.plant_nominal=plant.nominal;row.plant_resistance_scale=plant.resistance_scale;
 row.plant_capacity_Ah=plant.capacity_Ah;row.plant_soc_estimate_offset=plant.soc_estimate_offset;
+row.estimator_resistance_scale=plant.estimator_resistance_scale;
 end
 
 function normalized=localSpeedAction(c,speed)

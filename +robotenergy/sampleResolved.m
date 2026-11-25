@@ -45,7 +45,7 @@ last=robotenergy.instantaneousPack(s,demand.endpoint_watts(2));
 minBus=min(minBus,last.packV); peakCellA=max(peakCellA,last.cellA);
 % The final observation is instantaneous at the final SOC/RC state. Unlike
 % advance(), it must not reconstruct a prior frozen-parameter SOC.
-[r,ocv,dr,docv]=robotenergy.lookup(s,z(1));
+[r,ocv,dr,docv]=robotenergy.lookup(robotenergy.estimatorView(s),z(1));
 predictedV=ocv-r(1)*last.cellA-sum(z(2:4)); H=[docv-dr(1)*last.cellA,-1,-1,-1];
 C=Ftotal*priorCov*Ftotal'+s.Q;
 K=C*H'/(H*C*H'+s.Rv); innovation=last.cellV-predictedV;
